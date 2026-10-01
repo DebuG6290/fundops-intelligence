@@ -31,7 +31,7 @@
 
 ## M4 - Agentic workflow
 - [x] Router Agent
-- [ ] Specialist investigators
+- [x] Specialist investigators
 - [x] Evidence/Challenge Agent
 - [x] Resolution Agent
 - [ ] Escalation logic
