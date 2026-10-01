@@ -147,6 +147,11 @@ def _summarize(name: str, rows: list[BaselineResult | None], cases: pd.DataFrame
         "estimated_cost": None,
         "provider": next((row.provider for row, _ in valid if row.provider), None),
         "model": next((row.model for row, _ in valid if row.model), None),
+        "request_ids": [request_id for row, _ in available for request_id in row.request_ids],
+        "failure_details": [
+            {"error": row.error}
+            for row, _ in available if row.error
+        ],
         "metric_availability": {
             "root_cause_accuracy": "measured", "evidence_precision": "measured when citations exist; otherwise unavailable",
             "evidence_recall": "measured when ground-truth evidence is defined; otherwise unavailable",

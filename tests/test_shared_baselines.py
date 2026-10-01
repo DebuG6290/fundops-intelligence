@@ -26,10 +26,11 @@ def _report():
 
 class _SingleProvider:
     model = "sarvam-105b"
-    last_call = {"provider": "sarvam", "model": "sarvam-105b", "input_tokens": 12, "output_tokens": 8}
+    last_call = {"provider": "sarvam", "model": "sarvam-105b", "request_id": "req-1", "input_tokens": 12, "output_tokens": 8}
 
     def create_response(self, **kwargs):
         self.context = kwargs["context"]
+        self.last_call = {"provider": "sarvam", "model": self.model, "request_id": "req-1", "input_tokens": 12, "output_tokens": 8}
         return SimpleNamespace(output_text=_report())
 
 
@@ -74,6 +75,7 @@ def test_rules_single_llm_and_agentic_share_result_contract_without_ground_truth
     assert single_provider.context == case.to_context()
     assert agentic_provider.continuations == 1
     assert single.cited_evidence_ids == ["EV-1"]
+    assert single.request_ids == ["req-1"]
     assert agentic.cited_evidence_ids == ["EV-1"]
     assert agentic.escalation_required is False
     assert "ground_truth" not in single_provider.context

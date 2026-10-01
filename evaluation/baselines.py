@@ -63,6 +63,7 @@ class BaselineResult:
     output_tokens: int | None = None
     provider: str | None = None
     model: str | None = None
+    request_ids: list[str] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -183,10 +184,13 @@ class SingleLLMBaseline:
     def predict(self, case: ObservableCase) -> BaselineResult:
         prompt = _investigation_prompt()
         started = time.perf_counter()
+        usage: dict[str, Any] = {}
+        self.provider.last_call = {} if hasattr(self.provider, "last_call") else getattr(self.provider, "last_call", {})
         try:
             response = self.provider.create_response(
                 system_instructions=prompt, context=case.to_context(), tools=[]
             )
+            usage = _merge_usage(usage, getattr(self.provider, "last_call", {}) or {})
             raw = getattr(response, "output_text", "") or ""
             try:
                 payload = json.loads(raw)
@@ -203,6 +207,7 @@ class SingleLLMBaseline:
                     validation_error=str(validation_error),
                     system_instructions=prompt,
                 )
+                usage = _merge_usage(usage, getattr(self.provider, "last_call", {}) or {})
                 payload = json.loads(getattr(response, "output_text", "") or "")
                 if not isinstance(payload, dict):
                     raise ValueError("Investigation report must be a JSON object")
@@ -211,18 +216,18 @@ class SingleLLMBaseline:
             valid_ids = {str(item.get("evidence_id")) for item in case.evidence}
             citations = [item for item in report.cited_evidence_ids if item in valid_ids]
             hypotheses = _report_hypotheses(report)
-            usage = getattr(self.provider, "last_call", {}) or {}
             return BaselineResult(
                 approach=self.name, predicted_root_cause=report.probable_root_cause,
                 ranked_hypotheses=hypotheses, cited_evidence_ids=citations,
                 recommendation_category=report.recommendation_category,
                 escalation_required=report.escalation_required, contradiction_detected=None,
-                latency_seconds=_latency(usage, started), input_tokens=usage.get("input_tokens"),
+                latency_seconds=time.perf_counter() - started, input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"), provider=usage.get("provider", "sarvam"),
                 model=usage.get("model", getattr(self.provider, "model", None)),
+                request_ids=list(usage.get("request_ids", [])),
             )
         except Exception as exc:
-            return _failed_result(self.name, exc, self.provider, started)
+            return _failed_result(self.name, exc, self.provider, started, usage)
 
 
 class AgenticLLMBaseline:
@@ -246,6 +251,7 @@ class AgenticLLMBaseline:
             }, lambda: analogies),
         ])
         started = time.perf_counter()
+        self.provider.last_call = {} if hasattr(self.provider, "last_call") else getattr(self.provider, "last_call", {})
         try:
             run = InvestigationAgentLoop(self.provider, registry).run(
                 _investigation_prompt() + " Use tools to retrieve evidence and historical analogies. Historical cases are analogies, not current-case proof. Cite only current evidence IDs.",
@@ -282,10 +288,11 @@ class AgenticLLMBaseline:
                 latency_seconds=run.telemetry.latency_seconds or _latency(usage, started),
                 input_tokens=run.telemetry.input_tokens, output_tokens=run.telemetry.output_tokens,
                 provider=run.telemetry.provider or "sarvam", model=run.telemetry.model or getattr(self.provider, "model", None),
+                request_ids=list(run.telemetry.request_ids),
                 error=None,
             )
         except Exception as exc:
-            return _failed_result(self.name, exc, self.provider, started)
+            return _failed_result(self.name, exc, self.provider, started, getattr(self.provider, "last_call", {}) or {})
 
 
 def _investigation_prompt() -> str:
@@ -303,17 +310,36 @@ def _report_hypotheses(report: InvestigationReport) -> list[dict[str, Any]]:
     return [{"hypothesis_id": "HYP-001", "root_cause": report.probable_root_cause, "confidence": report.confidence}]
 
 
-def _failed_result(name: str, exc: Exception, provider: Any, started: float) -> BaselineResult:
-    usage = getattr(provider, "last_call", {}) or {}
+def _failed_result(name: str, exc: Exception, provider: Any, started: float, usage: dict[str, Any] | None = None) -> BaselineResult:
     import os
     key = os.getenv("SARVAM_API_KEY", "")
     message = str(exc).replace(key, "[redacted]") if key else str(exc)
+    request_ids = list((usage or {}).get("request_ids", []))
+    if (usage or {}).get("request_id"):
+        request_ids.append(str((usage or {})["request_id"]))
     return BaselineResult(
-        approach=name, latency_seconds=_latency(usage, started),
-        input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
-        provider=usage.get("provider", "sarvam"), model=usage.get("model", getattr(provider, "model", None)),
+        approach=name, latency_seconds=time.perf_counter() - started,
+        input_tokens=(usage or {}).get("input_tokens"), output_tokens=(usage or {}).get("output_tokens"),
+        provider="sarvam", model=getattr(provider, "model", None),
+        request_ids=request_ids,
         error=f"{type(exc).__name__}: {message[:300]}",
     )
+
+
+def _merge_usage(total: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(total)
+    for token in ("input_tokens", "output_tokens"):
+        value = latest.get(token)
+        if value is not None:
+            merged[token] = int(merged.get(token, 0)) + int(value)
+    request_ids = list(merged.get("request_ids", []))
+    if latest.get("request_id"):
+        request_ids.append(str(latest["request_id"]))
+    merged["request_ids"] = request_ids
+    for key in ("provider", "model"):
+        if latest.get(key):
+            merged[key] = latest[key]
+    return merged
 
 
 def _latency(usage: dict[str, Any], started: float) -> float:

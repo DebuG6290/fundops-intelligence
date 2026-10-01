@@ -311,6 +311,19 @@ if result:
                         })
                 if detail_rows:
                     st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+                if st.checkbox("Show provider request IDs and failure details", key="show_eval_provider_details"):
+                    for name, values in metrics["models"].items():
+                        if not isinstance(values, dict):
+                            continue
+                        st.write(f"**{name}**")
+                        if values.get("request_ids"):
+                            for request_id in values["request_ids"]:
+                                st.code(request_id, language=None)
+                        if values.get("failure_details"):
+                            for failure in values["failure_details"]:
+                                st.error(failure["error"])
+                        elif values.get("failures", 0) == 0:
+                            st.caption("No provider failures recorded.")
         else:
             st.info("Not evaluated yet. Run the offline baseline to create measured results; Sarvam quality is not inferred from demo behavior.")
 else:
