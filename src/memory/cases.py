@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Callable, Iterable, Protocol, Sequence, runtime_checkable
 
 from src.models.evidence import EvidenceItem, EvidenceSourceType
 
@@ -176,3 +176,55 @@ class CaseMemory:
 
         scored.sort(key=lambda item: item[0], reverse=True)
         return [case for score, case in scored[:top_k] if score > 0]
+
+
+class KeywordMemory(CaseMemory):
+    """Named baseline implementation retained behind the memory protocol."""
+
+
+class SemanticMemory(CaseMemory):
+    """Embedding-backed retrieval boundary with injectable embedding function.
+
+    No external embedding model is bundled or called by default. This lets a
+    future governed embedding service be introduced without changing review
+    or workflow callers. Historical cases remain retrieval analogies only.
+    """
+
+    def __init__(
+        self,
+        cases: Iterable[HistoricalCase] = (),
+        *,
+        embedding_fn: Callable[[str], Sequence[float]],
+    ) -> None:
+        super().__init__(cases)
+        self._embedding_fn = embedding_fn
+
+    def search(
+        self, query: str, exception_type: str | None = None, top_k: int = 3
+    ) -> list[HistoricalCase]:
+        query_vector = self._embedding_fn(query)
+        if not query_vector:
+            return []
+        candidates = [
+            case for case in self._cases
+            if exception_type is None or case.exception_type == exception_type
+        ]
+        ranked: list[tuple[float, HistoricalCase]] = []
+        for case in candidates:
+            # Exclude root_cause: retrieval is based on symptoms/context, not
+            # an answer-key match. Retrieved cases are still explicitly analogies.
+            text = " ".join((case.title, *case.symptoms, case.resolution))
+            score = _cosine_similarity(query_vector, self._embedding_fn(text))
+            ranked.append((score, case))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [case for score, case in ranked[:top_k] if score > 0]
+
+
+def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+    if len(left) != len(right) or not left:
+        return 0.0
+    left_norm = sum(float(item) ** 2 for item in left) ** 0.5
+    right_norm = sum(float(item) ** 2 for item in right) ** 0.5
+    if not left_norm or not right_norm:
+        return 0.0
+    return sum(float(a) * float(b) for a, b in zip(left, right)) / (left_norm * right_norm)

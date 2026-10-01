@@ -106,3 +106,45 @@ def test_report_rejects_out_of_range_hypothesis_confidence():
     }
     with pytest.raises(Exception):
         InvestigationReport.model_validate(payload)
+
+
+def test_report_validates_evidence_to_hypothesis_links():
+    payload = {
+        "probable_root_cause": "STALE_PRICE", "confidence": .84,
+        "observations": [], "supporting_evidence": [], "counter_evidence": [],
+        "recommended_next_step": "Verify the price timestamp.",
+        "hypotheses": [{"hypothesis_id": "HYP-001", "root_cause": "STALE_PRICE",
+                        "rationale": "The current source differs materially.", "confidence": .84}],
+        "cited_evidence_ids": ["EV-1"],
+        "evidence_assessments": [{"evidence_id": "EV-1", "hypothesis_id": "HYP-001", "relationship": "SUPPORTS"}],
+    }
+    report = InvestigationReport.model_validate(payload)
+    assert report.evidence_assessments[0].hypothesis_id == "HYP-001"
+    payload["evidence_assessments"][0]["hypothesis_id"] = "HYP-UNKNOWN"
+    with pytest.raises(Exception, match="reference a hypothesis"):
+        InvestigationReport.model_validate(payload)
+
+
+def test_report_cannot_waive_human_review_or_duplicate_hypothesis_ids():
+    payload = {
+        "probable_root_cause": "STALE_PRICE", "confidence": .84,
+        "observations": [], "supporting_evidence": [], "counter_evidence": [],
+        "recommended_next_step": "Review.", "human_review_required": False,
+    }
+    with pytest.raises(Exception, match="Human review is mandatory"):
+        InvestigationReport.model_validate(payload)
+
+
+def test_agent_loop_rejects_non_object_tool_arguments():
+    class InvalidToolProvider:
+        def create_response(self, **kwargs):
+            return SimpleNamespace(id="r1", output=[SimpleNamespace(
+                type="function_call", name="known", arguments="[]", call_id="c1",
+            )], output_text="")
+
+    registry = ToolRegistry([ToolDefinition(
+        name="known", description="test", parameters={"type": "object", "properties": {}},
+        function=lambda: {},
+    )])
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        InvestigationAgentLoop(InvalidToolProvider(), registry).run("test", {})

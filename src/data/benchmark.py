@@ -19,12 +19,30 @@ CAUSES = (
     "WRONG_SECURITY_MAPPING", "VENDOR_DISCREPANCY", "MULTI_CAUSE_EXCEPTION",
     "INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE",
 )
+DIFFICULTIES = ("easy", "medium", "hard", "conflicting", "insufficient", "multi_cause", "adversarial")
 
 
 @dataclass(frozen=True)
 class BenchmarkDataset:
     observable: dict[str, pd.DataFrame]
     ground_truth: pd.DataFrame
+
+
+DATASET_PRESETS = {
+    "small_demo": {"fund_count": 5, "security_count": 30, "position_count": 100,
+                    "price_count": 150, "transaction_count": 120, "corporate_action_count": 40,
+                    "fx_count": 50, "exception_count": 480, "historical_case_count": 100},
+    "1k": {"exception_count": 1_000},
+    "10k": {"exception_count": 10_000},
+    "100k": {"exception_count": 100_000},
+}
+
+
+def generate_benchmark_preset(name: str, *, seed: int = 42) -> BenchmarkDataset:
+    """Generate a documented size preset without persisting generated data."""
+    if name not in DATASET_PRESETS:
+        raise ValueError(f"Unknown benchmark preset: {name}")
+    return generate_benchmark_dataset(seed=seed, **DATASET_PRESETS[name])
 
 
 def generate_benchmark_dataset(
@@ -39,6 +57,7 @@ def generate_benchmark_dataset(
     fx_count: int = 50_000,
     exception_count: int = 10_000,
     historical_case_count: int = 5_000,
+    difficulty_mix: dict[str, float] | None = None,
 ) -> BenchmarkDataset:
     """Generate target-scale synthetic fund records and labeled exceptions.
 
@@ -116,11 +135,16 @@ def generate_benchmark_dataset(
     nav_calculations["valuation_date"] = pd.Timestamp("2025-01-01")
 
     cause = rng.choice(CAUSES, exception_count)
-    difficulty = rng.choice(
-        ["easy", "medium", "hard", "conflicting", "insufficient", "multi_cause"],
-        exception_count,
-        p=[0.30, 0.25, 0.15, 0.12, 0.10, 0.08],
-    )
+    mix = difficulty_mix if difficulty_mix is not None else {
+        "easy": .24, "medium": .24, "hard": .16, "conflicting": .12,
+        "insufficient": .10, "multi_cause": .08, "adversarial": .06,
+    }
+    if set(mix) - set(DIFFICULTIES) or any(value < 0 for value in mix.values()) or not np.isclose(sum(mix.values()), 1.0):
+        raise ValueError("difficulty_mix must use supported labels and sum to 1")
+    difficulty = rng.choice(list(mix), exception_count, p=list(mix.values()))
+    cause[difficulty == "conflicting"] = "CONFLICTING_EVIDENCE"
+    cause[difficulty == "insufficient"] = "INSUFFICIENT_EVIDENCE"
+    cause[difficulty == "multi_cause"] = "MULTI_CAUSE_EXCEPTION"
     # Include a useful feature for every injection mechanism; these are noisy
     # operational observations rather than labels or hidden truth.
     observable = pd.DataFrame({
@@ -140,7 +164,6 @@ def generate_benchmark_dataset(
         "record_delay_hours": rng.integers(0, 48, exception_count),
         "severity": rng.choice(["LOW", "MEDIUM", "HIGH", "CRITICAL"], exception_count),
         "financial_impact": np.round(rng.lognormal(8.0, 1.2, exception_count), 2),
-        "difficulty": difficulty,
         "evidence_ids": [f"EV_{i:08d}" for i in range(exception_count)],
     })
 
@@ -158,15 +181,35 @@ def generate_benchmark_dataset(
         elif mechanism == "MULTI_CAUSE_EXCEPTION":
             observable.at[index, "price_variance_pct"] = 16.0
             observable.at[index, "fx_deviation_pct"] = 5.0
-            observable.at[index, "difficulty"] = "multi_cause"
         elif mechanism == "INSUFFICIENT_EVIDENCE":
             observable.at[index, "evidence_ids"] = ""
-            observable.at[index, "difficulty"] = "insufficient"
         elif mechanism == "CONFLICTING_EVIDENCE":
             observable.at[index, "source_conflict_count"] = max(
                 2, int(observable.at[index, "source_conflict_count"])
             )
-            observable.at[index, "difficulty"] = "conflicting"
+
+    # Make hard/adversarial records genuinely confounded: damp the target
+    # signal and inject a stronger, unrelated signal. The intended cause is
+    # retained only in the separate evaluation artifact.
+    distractor_features = ["price_variance_pct", "quantity_variance_pct", "fx_deviation_pct", "vendor_disagreement_pct"]
+    for index, level in enumerate(difficulty):
+        if level in {"hard", "adversarial", "conflicting"}:
+            mechanism = cause[index]
+            target_column = {
+                "STALE_PRICE": "price_variance_pct", "MISSING_TRANSACTION": "quantity_variance_pct",
+                "WRONG_QUANTITY": "quantity_variance_pct", "FX_MISMATCH": "fx_deviation_pct",
+                "VENDOR_DISCREPANCY": "vendor_disagreement_pct",
+            }.get(mechanism)
+            if target_column:
+                observable.at[index, target_column] *= .22 if level == "hard" else .12
+            distractor = rng.choice([column for column in distractor_features if column != target_column])
+            distractor_magnitude = float(rng.uniform(24, 55) if distractor != "vendor_disagreement_pct" else rng.uniform(13, 28))
+            observable.at[index, distractor] = distractor_magnitude
+        if level == "conflicting":
+            observable.at[index, "source_conflict_count"] = int(rng.integers(2, 5))
+            observable.at[index, "vendor_disagreement_pct"] = float(rng.uniform(2, 9))
+        if level == "insufficient":
+            observable.at[index, "evidence_ids"] = ""
 
     gt = pd.DataFrame({
         "exception_id": observable["exception_id"].copy(),
@@ -180,12 +223,13 @@ def generate_benchmark_dataset(
             for i, item in enumerate(cause)
         ],
         "expected_escalation": np.isin(cause, ["INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE"]),
+        "expected_contradiction": cause == "CONFLICTING_EVIDENCE",
         "expected_recommendation_category": np.where(
             np.isin(cause, ["INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE"]),
             "INVESTIGATE_FURTHER", "REVIEW_RECOMMENDATION",
         ),
         "expected_investigation_category": observable["exception_type"].copy(),
-        "difficulty": observable["difficulty"].copy(),
+        "difficulty": difficulty.copy(),
     })
     evidence_rows = observable.loc[observable["evidence_ids"].ne(""), [
         "exception_id", "evidence_ids", "price_variance_pct", "quantity_variance_pct",
@@ -203,6 +247,7 @@ def generate_benchmark_dataset(
             + "%; source conflicts " + str(int(row.source_conflict_count)) + "."
             for row in evidence_rows.itertuples(index=False)
         ],
+        "reliability": rng.uniform(.55, .99, len(evidence_rows)),
     })
     historical_cases = pd.DataFrame({
         "case_id": [f"CASE_{i:08d}" for i in range(historical_case_count)],
@@ -218,6 +263,8 @@ def generate_benchmark_dataset(
             "Record received after valuation cutoff.",
             "No additional operator note supplied.",
         ], exception_count),
+        "note_age_hours": rng.integers(0, 240, exception_count),
+        "stale": rng.choice([False, True], exception_count, p=[.65, .35]),
     })
     return BenchmarkDataset(
         observable={

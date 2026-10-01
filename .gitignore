@@ -4,5 +4,6 @@ __pycache__/
 venv/
 .env
 .pytest_cache/
+.pytest-deps/
 .DS_Store
 .streamlit/

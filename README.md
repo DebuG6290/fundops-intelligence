@@ -53,13 +53,24 @@ Observable exception features are separate from the evaluation-only
 `ground_truth` table. See the Evaluation tab or run
 `python -m evaluation.run_benchmark` after installing dependencies.
 
-The offline benchmark measures a transparent rule heuristic and a
-Random-Forest tabular baseline on the same stratified holdout. Single-LLM and
-agentic-LLM quality remain **Not evaluated** until actual Sarvam runs are
-performed; no values are inferred from deterministic demo outcomes. The
+The benchmark uses a shared result contract for rules, Random Forest, a single
+Sarvam completion, and a tool-using Sarvam investigator with a deterministic
+challenge check. Sarvam adapters run only when providers are explicitly
+supplied; the UI requires an explicit quota confirmation and caps evaluations
+to a small held-out sample. Metrics remain unavailable when an approach cannot
+support them. No values are inferred from deterministic demo outcomes. The
 research question is: *Under what conditions does an evidence-grounded
 agentic LLM architecture add value over deterministic rules, classical ML,
 and a single-LLM baseline for fund-operation exception investigation?*
+
+Benchmark difficulty is evaluator-only metadata. Investigators receive an
+allowlisted case view containing observable signals, current-case evidence,
+operational notes, and historical analogies; labels, injection mechanism,
+secondary causes, expected escalation/recommendation, and difficulty are
+joined only after prediction. Presets include `small_demo`, `1k`, `10k`, and
+`100k` exceptions. Hard/adversarial cases include damped causal signals and
+stronger distractors. These are research fixtures, not claims about real fund
+operations. Large presets are compute- and memory-intensive.
 
 ## Repository structure
 - `src/analytics`: deterministic financial calculations
@@ -116,3 +127,18 @@ Human review
 ```
 
 The LLM is not responsible for financial arithmetic. Python owns calculations and thresholds; the agent owns investigation planning and evidence synthesis.
+
+## Validation and limitations
+
+The benchmark is synthetic. Evidence relevance and contradiction labels remain
+coarse injection labels, not independently adjudicated financial records.
+The single-LLM adapter makes one completion without tools; the agentic adapter
+adds evidence/history tools and a deterministic challenge rule, not a separate
+LLM challenger or resolution planner. Provider token totals are reported when
+available; estimated cost remains unavailable until versioned Sarvam pricing
+is configured. Semantic retrieval is an injected embedding interface only;
+no embedding model is bundled. Multi-hypothesis reports support up to five
+stable IDs, but evidence assessments are model-reported links checked against
+observed evidence IDs, not independently verified semantic entailments.
+Reviews and memory are process-local; only explicit human ACCEPT promotes a
+case to analogy memory. This README does not claim model superiority.

@@ -66,13 +66,33 @@ class InvestigationAgentLoop:
                 ]
 
                 if not calls:
-                    run.report = self._parse_report(response.output_text)
+                    try:
+                        run.report = self._parse_report(response.output_text)
+                    except ValueError as validation_error:
+                        repair = getattr(self.provider, "repair_structured_response", None)
+                        if repair is None:
+                            raise
+                        response = repair(
+                            invalid_output=getattr(response, "output_text", "") or "",
+                            validation_error=str(validation_error),
+                            system_instructions=system_instructions,
+                        )
+                        self._record_provider_usage(run)
+                        run.raw_outputs.append(getattr(response, "output_text", "") or "")
+                        run.report = self._parse_report(getattr(response, "output_text", "") or "")
                     return run
 
                 outputs = []
 
                 for call in calls:
-                    arguments = json.loads(call.arguments)
+                    if not getattr(call, "name", None) or not getattr(call, "call_id", None):
+                        raise ValueError("Provider returned an invalid tool call (missing name or call ID)")
+                    try:
+                        arguments = json.loads(call.arguments)
+                    except (TypeError, json.JSONDecodeError):
+                        raise ValueError(f"Provider returned invalid JSON arguments for tool {call.name}") from None
+                    if not isinstance(arguments, dict):
+                        raise ValueError(f"Provider tool arguments for {call.name} must be a JSON object")
                     result = self.tools.execute(call.name, arguments)
                     run.telemetry.record_tool_call()
 
@@ -133,6 +153,11 @@ class InvestigationAgentLoop:
     def _parse_report(output_text: str) -> InvestigationReport:
         try:
             payload = json.loads(output_text)
+            if not isinstance(payload, dict):
+                raise ValueError("Investigation report must be a JSON object")
+            # Enforce the human-in-the-loop boundary at the parser even if a
+            # model incorrectly emits false; never let model text waive review.
+            payload["human_review_required"] = True
             return InvestigationReport.model_validate(payload)
         except Exception as exc:
             raise ValueError(

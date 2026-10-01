@@ -1,4 +1,4 @@
-from src.memory.cases import CaseMemory, seed_historical_cases
+from src.memory.cases import CaseMemory, SemanticMemory, seed_historical_cases
 
 
 def test_seed_cases_exist():
@@ -26,3 +26,15 @@ def test_exception_type_filter():
 
     assert results
     assert all(case.exception_type == "TRANSACTION_MISMATCH" for case in results)
+
+
+def test_semantic_memory_uses_injected_embeddings_and_returns_analogies():
+    # Small deterministic test encoder; no external model/network is used.
+    def embedding(text: str):
+        lowered = text.lower()
+        return [float("price" in lowered), float("settlement" in lowered), float("nav" in lowered)]
+
+    memory = SemanticMemory(seed_historical_cases(), embedding_fn=embedding)
+    results = memory.search("price nav variance", "NAV_DISCREPANCY")
+    assert results
+    assert results[0].case_id == "CASE_001"

@@ -78,6 +78,24 @@ class SarvamProvider:
             })
         return self._request(messages, self._tools_by_response.get(previous_response_id, []))
 
+    def repair_structured_response(
+        self, *, invalid_output: str, validation_error: str, system_instructions: str
+    ) -> Any:
+        """Make one bounded schema-repair attempt after local Pydantic validation.
+
+        The original answer is explicitly treated as untrusted data. The
+        returned content is still parsed and validated by the caller.
+        """
+        messages = [
+            {"role": "system", "content": system_instructions},
+            {"role": "user", "content": json.dumps({
+                "invalid_output": invalid_output,
+                "validation_error": validation_error[:1000],
+                "instruction": "Return a corrected JSON object matching the requested schema. Do not add explanation.",
+            })},
+        ]
+        return self._request(messages, [])
+
     def _request(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Any:
         kwargs: dict[str, Any] = {
             "model": self.model,
