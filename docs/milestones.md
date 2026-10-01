@@ -17,23 +17,23 @@
 - [x] Reproducible demo
 
 ## M2 - Case memory
-- [ ] Define case schema
-- [ ] Seed historical cases
-- [ ] Keyword/structured retrieval
-- [ ] Evidence records
+- [x] Define case schema
+- [x] Seed historical cases
+- [x] Keyword/structured retrieval
+- [x] Evidence records
 
 ## M3 - First Agent
-- [ ] LLM provider abstraction
-- [ ] Tool calling
-- [ ] Investigation state
-- [ ] Single Investigation Agent
-- [ ] Ground-truth evaluation
+- [x] LLM provider abstraction
+- [x] Tool calling
+- [x] Investigation state
+- [x] Single Investigation Agent
+- [x] Ground-truth evaluation
 
 ## M4 - Agentic workflow
-- [ ] Router Agent
+- [x] Router Agent
 - [ ] Specialist investigators
-- [ ] Evidence/Challenge Agent
-- [ ] Resolution Agent
+- [x] Evidence/Challenge Agent
+- [x] Resolution Agent
 - [ ] Escalation logic
 
 ## M5 - Human review
@@ -43,8 +43,8 @@
 - [ ] Case closure and memory write-back
 
 ## M6 - Demo application
-- [ ] Streamlit interface
-- [ ] Exception dashboard
+- [x] Streamlit interface
+- [x] Exception dashboard
 - [ ] Agent trace
 - [ ] Evidence panel
 - [ ] Human review
