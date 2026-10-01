@@ -55,6 +55,7 @@ class InvestigationAgentLoop:
                 context=context,
                 tools=self.tools.definitions(),
             )
+            self._record_provider_usage(run)
 
             for _ in range(self.max_steps):
                 run.raw_outputs.append(getattr(response, "output_text", ""))
@@ -107,12 +108,26 @@ class InvestigationAgentLoop:
                     tool_outputs=outputs,
                     system_instructions=system_instructions,
                 )
+                self._record_provider_usage(run)
 
             raise RuntimeError(
                 f"Investigation agent exceeded max_steps={self.max_steps}"
             )
         finally:
             run.telemetry.finish()
+
+    def _record_provider_usage(self, run: AgentRun) -> None:
+        usage = getattr(self.provider, "last_call", None) or {}
+        run.telemetry.provider = usage.get("provider", run.telemetry.provider)
+        run.telemetry.model = usage.get("model", run.telemetry.model)
+        request_id = usage.get("request_id")
+        if request_id:
+            run.telemetry.request_ids.append(str(request_id))
+        for target, key in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
+            value = usage.get(key)
+            if value is not None:
+                current = getattr(run.telemetry, target) or 0
+                setattr(run.telemetry, target, current + int(value))
 
     @staticmethod
     def _parse_report(output_text: str) -> InvestigationReport:

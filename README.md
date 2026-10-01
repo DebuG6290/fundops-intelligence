@@ -30,10 +30,36 @@ streamlit run app/streamlit_app.py
 
 The reproducible deterministic demo is the default and needs no LLM key. It
 covers NAV, transaction mismatch, corporate action, and an insufficient
-evidence escalation path. If `OPENAI_API_KEY` is configured, the UI also
-offers an optional live LLM specialist mode for transaction and corporate
-action investigations. Human review and case memory are process-local and
-reset when Streamlit restarts. See [the demo flow](docs/demo_flow.md).
+evidence escalation path. Optional Live Sarvam mode uses the stable Sarvam
+Chat Completion V1 SDK adapter. Configure `SARVAM_API_KEY`; the default model
+is `sarvam-105b`. Human review and case memory are process-local and reset
+when Streamlit restarts. See [the demo flow](docs/demo_flow.md).
+
+## Configure optional Live Sarvam mode
+
+Copy `.env.example` to `.env` and add your own key locally. Never commit the
+key. Without it, choose **Reproducible demo**; the app remains fully usable
+offline. `SARVAM_TIMEOUT_SECONDS` and `SARVAM_MODEL` can be overridden.
+
+## Synthetic benchmark and research comparison
+
+`src.data.benchmark.generate_benchmark_dataset` builds deterministic
+fund/security/position/price/transaction/corporate-action/FX records and
+injected exceptions on demand. It can generate the documented scale (100
+funds, 5,000 securities, 200,000 positions, 500,000 prices, 300,000
+transactions, 20,000 corporate actions, 50,000 FX rows, 10,000 exceptions,
+and 5,000 historical analogies) without storing a generated blob in Git.
+Observable exception features are separate from the evaluation-only
+`ground_truth` table. See the Evaluation tab or run
+`python -m evaluation.run_benchmark` after installing dependencies.
+
+The offline benchmark measures a transparent rule heuristic and a
+Random-Forest tabular baseline on the same stratified holdout. Single-LLM and
+agentic-LLM quality remain **Not evaluated** until actual Sarvam runs are
+performed; no values are inferred from deterministic demo outcomes. The
+research question is: *Under what conditions does an evidence-grounded
+agentic LLM architecture add value over deterministic rules, classical ML,
+and a single-LLM baseline for fund-operation exception investigation?*
 
 ## Repository structure
 - `src/analytics`: deterministic financial calculations
@@ -60,6 +86,10 @@ The prototype currently includes:
 - Evidence challenge and human-review resolution
 - Streamlit demonstration interface
 - Provider-agnostic LLM investigation loop with function tools
+- Sarvam Chat Completion V1 provider, optional live mode and usage telemetry
+- Multi-hypothesis structured report extension
+- Scalable on-demand synthetic benchmark and hidden evaluation labels
+- Shared-holdout rule and classical ML baseline comparison
 - Structured investigation reports and agent telemetry
 - Reproducible evaluation harness
 

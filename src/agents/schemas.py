@@ -6,9 +6,12 @@ from pydantic import BaseModel, Field
 
 
 class Hypothesis(BaseModel):
+    hypothesis_id: str = Field(min_length=1)
     root_cause: str
     rationale: str
     confidence: float = Field(ge=0.0, le=1.0)
+    required_evidence: list[str] = Field(default_factory=list)
+    uncertainty: str = ""
 
 
 class InvestigationReport(BaseModel):
@@ -26,6 +29,9 @@ class InvestigationReport(BaseModel):
     counter_evidence: list[str]
     recommended_next_step: str
     human_review_required: bool = True
+    # Transitional multi-hypothesis extension. The probable-root-cause fields
+    # remain for existing consumers while newer agents can return alternatives.
+    hypotheses: list[Hypothesis] = Field(default_factory=list, max_length=5)
 
 
 class ToolTrace(BaseModel):

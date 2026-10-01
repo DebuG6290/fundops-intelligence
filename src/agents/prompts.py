@@ -22,6 +22,16 @@ Your final response MUST be valid JSON matching this schema:
   "observations": ["string"],
   "supporting_evidence": ["string"],
   "counter_evidence": ["string"],
+  "hypotheses": [
+    {
+      "hypothesis_id": "HYP-001",
+      "root_cause": "string",
+      "rationale": "string",
+      "confidence": 0.0,
+      "required_evidence": ["string"],
+      "uncertainty": "string"
+    }
+  ],
   "recommended_next_step": "string",
   "human_review_required": true
 }

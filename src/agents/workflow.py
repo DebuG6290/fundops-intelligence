@@ -60,8 +60,7 @@ def _state_from_specialist_report(
             "specialist_report",
         )
 
-    # Preserve structured hypotheses when a specialist report implementation
-    # supplies them; the current InvestigationReport schema has one root cause.
+    # Preserve ranked structured hypotheses where the specialist supplies them.
     hypotheses = getattr(report, "hypotheses", None) or []
     for hypothesis in hypotheses:
         values = (
@@ -73,6 +72,9 @@ def _state_from_specialist_report(
             root_cause=values["root_cause"],
             rationale=values.get("rationale", ""),
             confidence=values["confidence"],
+            hypothesis_id=values.get("hypothesis_id"),
+            required_evidence=values.get("required_evidence", []),
+            uncertainty=values.get("uncertainty", ""),
         )
     if not state.hypotheses and report.probable_root_cause:
         state.add_hypothesis(

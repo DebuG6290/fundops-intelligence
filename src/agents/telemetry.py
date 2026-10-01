@@ -12,6 +12,9 @@ class AgentTelemetry:
     tool_calls: int = 0
     input_tokens: int | None = None
     output_tokens: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_ids: list[str] = field(default_factory=list)
 
     def finish(self) -> None:
         self.completed_at = time.perf_counter()
@@ -31,4 +34,7 @@ class AgentTelemetry:
             "tool_calls": self.tool_calls,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "provider": self.provider,
+            "model": self.model,
+            "request_ids": list(self.request_ids),
         }

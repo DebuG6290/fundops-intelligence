@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.agent_loop import AgentRun, InvestigationAgentLoop
-from src.agents.openai_provider import OpenAIResponsesProvider
+from src.llm.sarvam_provider import SarvamProvider
 from src.agents.prompts import SYSTEM_PROMPT
 from src.agents.tool_registry import ToolDefinition, ToolRegistry
 from src.data.scenarios_extra import TransactionMismatchScenario
@@ -59,7 +59,7 @@ class TransactionInvestigationAgent:
         provider: Any | None = None,
     ) -> None:
         self.memory = memory
-        self.provider = provider or OpenAIResponsesProvider()
+        self.provider = provider or SarvamProvider()
 
     def investigate(self, scenario: TransactionMismatchScenario) -> AgentRun:
         context = {

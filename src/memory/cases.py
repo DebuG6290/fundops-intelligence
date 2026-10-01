@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Protocol, runtime_checkable
 
 from src.models.evidence import EvidenceItem, EvidenceSourceType
 
@@ -116,8 +116,21 @@ def seed_historical_cases() -> list[HistoricalCase]:
     ]
 
 
+@runtime_checkable
+class CaseMemoryBackend(Protocol):
+    """Replaceable memory boundary; current implementation is keyword-only."""
+
+    def add(self, case: HistoricalCase) -> None: ...
+
+    def next_case_id(self) -> str: ...
+
+    def search(
+        self, query: str, exception_type: str | None = None, top_k: int = 3
+    ) -> list[HistoricalCase]: ...
+
+
 class CaseMemory:
-    """Simple transparent retrieval baseline; vector retrieval can replace it later."""
+    """Transparent keyword retrieval baseline behind ``CaseMemoryBackend``."""
 
     def __init__(self, cases: Iterable[HistoricalCase] = ()) -> None:
         self._cases = list(cases)
