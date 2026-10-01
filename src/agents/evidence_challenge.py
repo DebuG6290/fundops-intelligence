@@ -10,6 +10,7 @@ from src.agents.state import InvestigationState
 class ChallengeResult:
     challenged: bool
     contradiction_found: bool
+    ambiguity_found: bool
     final_confidence: float
     recommendation: str
 
@@ -27,6 +28,7 @@ class EvidenceChallengeAgent:
             return ChallengeResult(
                 challenged=True,
                 contradiction_found=False,
+                ambiguity_found=False,
                 final_confidence=0.0,
                 recommendation="Escalate: no hypothesis available.",
             )
@@ -42,6 +44,21 @@ class EvidenceChallengeAgent:
         )
 
         contradiction = False
+        ambiguity = False
+
+        # Escalate when multiple plausible hypotheses are too close to call.
+        if len(state.hypotheses) >= 2:
+            second = state.hypotheses[1]
+            if abs(float(leading["confidence"]) - float(second["confidence"])) < 0.15:
+                ambiguity = True
+
+        # Explicit counter-evidence from an investigator or specialist agent
+        # overrides an otherwise confident recommendation.
+        for item in state.observations:
+            if item["name"] == "counter_evidence":
+                value = item.get("value", {})
+                if isinstance(value, dict) and value.get("contradicts"):
+                    contradiction = True
 
         if leading["root_cause"] == "PRICE_EXCEPTION":
             if not price_check or not price_check.get("found"):
@@ -49,17 +66,27 @@ class EvidenceChallengeAgent:
             elif abs(price_check.get("difference_pct", 0)) < 10:
                 contradiction = True
 
-        if contradiction:
+        if contradiction or ambiguity:
+            reasons = []
+            if contradiction:
+                reasons.append("conflicting evidence")
+            if ambiguity:
+                reasons.append("multiple plausible hypotheses")
+            reason_text = " and ".join(reasons)
             return ChallengeResult(
                 challenged=True,
-                contradiction_found=True,
+                contradiction_found=contradiction,
+                ambiguity_found=ambiguity,
                 final_confidence=min(leading["confidence"], 0.35),
-                recommendation="Escalate: leading hypothesis lacks sufficient supporting evidence.",
+                recommendation=(
+                    f"Escalate: {reason_text} prevents a reliable conclusion."
+                ),
             )
 
         return ChallengeResult(
             challenged=True,
             contradiction_found=False,
+            ambiguity_found=False,
             final_confidence=leading["confidence"],
             recommendation=state.recommended_action or "Proceed to human review.",
         )
@@ -71,7 +98,7 @@ def apply_challenge(
 ) -> InvestigationState:
     state.confidence = challenge.final_confidence
 
-    if challenge.contradiction_found:
+    if challenge.contradiction_found or challenge.ambiguity_found:
         state.status = "ESCALATE"
         state.recommended_action = challenge.recommendation
     else:
