@@ -80,7 +80,7 @@ class NavInvestigationAgent:
         exception = calculate_nav_variance_tool(scenario)
         context = {
             "exception": exception,
-            "known_exception_type": scenario.exception_type,
+            "known_exception_type": "NAV_DISCREPANCY",
             "investigation_objective": (
                 "Identify the most probable operational root cause and "
                 "recommend the next human investigation step."
