@@ -29,7 +29,7 @@ class DemoWorkbench:
             scenario = create_price_exception_scenario(seed=42)
             if scenario_name == self.INSUFFICIENT:
                 scenario.calculated_prices = scenario.expected_prices.copy(deep=True)
-            return self.workflow.run_nav(scenario)
+            return self.workflow.run_nav(scenario, provider=provider)
         if scenario_name == self.TRANSACTION:
             return self.workflow.run_transaction(create_transaction_mismatch_scenario(seed=42), provider)
         if scenario_name == self.CORPORATE_ACTION:

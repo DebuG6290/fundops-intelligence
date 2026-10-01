@@ -9,6 +9,7 @@ from src.agents.evidence_challenge import EvidenceChallengeAgent, apply_challeng
 from src.agents.resolution import ResolutionAgent
 from src.agents.router import InvestigationRouter
 from src.agents.rule_based_investigator import RuleBasedInvestigator
+from src.agents.nav_agent import NavInvestigationAgent
 from src.agents.schemas import InvestigationReport, ToolTrace
 from src.agents.state import InvestigationState
 from src.agents.transaction_agent import TransactionInvestigationAgent
@@ -23,19 +24,21 @@ from src.review.models import HumanDecision, HumanReviewRecord, HumanReviewSubmi
 from src.review.service import HumanReviewService
 from src.tools.exception_tools import find_corporate_actions_tool, find_transaction_mismatches_tool
 from src.tools.memory_tools import search_historical_cases_tool
+from src.tools.nav_tools import calculate_nav_variance_tool
 
 
 def _state_from_specialist_report(
-    scenario: TransactionMismatchScenario | CorporateActionScenario,
+    scenario: InvestigationScenario | TransactionMismatchScenario | CorporateActionScenario,
     report: Any,
     evidence: list[EvidenceItem] | None = None,
 ) -> InvestigationState:
     """Adapt a specialist report to the shared deterministic control state."""
-    exception_type = (
-        "TRANSACTION_MISMATCH"
-        if isinstance(scenario, TransactionMismatchScenario)
-        else "CORPORATE_ACTION"
-    )
+    if isinstance(scenario, TransactionMismatchScenario):
+        exception_type = "TRANSACTION_MISMATCH"
+    elif isinstance(scenario, CorporateActionScenario):
+        exception_type = "CORPORATE_ACTION"
+    else:
+        exception_type = "NAV_DISCREPANCY"
     state = InvestigationState(
         exception={
             "exception_id": scenario.exception_id,
@@ -285,22 +288,45 @@ class InvestigationWorkflow:
         self.review_service = review_service or HumanReviewService()
         self.accepted_cases_by_review_id: dict[str, HistoricalCase] = {}
 
-    def run_nav(self, scenario: InvestigationScenario) -> dict[str, Any]:
+    def run_nav(
+        self, scenario: InvestigationScenario, provider: Any | None = None
+    ) -> dict[str, Any]:
         route = self.router.route("NAV_DISCREPANCY")
-        state = self.investigator.investigate(scenario)
+        if provider is None:
+            state = self.investigator.investigate(scenario)
+        else:
+            run = NavInvestigationAgent(self.memory, provider=provider).investigate(scenario)
+            if run.report is None:
+                raise RuntimeError("NAV specialist did not return a valid investigation report")
+            state = _state_from_specialist_report(scenario, run.report, run.evidence)
+            state.exception = {
+                **calculate_nav_variance_tool(scenario),
+                **state.exception,
+            }
         exception = {
             **state.exception,
             "exception_id": scenario.exception_id,
             "exception_type": "NAV_DISCREPANCY",
         }
 
-        return {
+        result = {
             "route": route,
             "exception": exception,
             "observations": state.observations,
             "hypotheses": state.hypotheses,
             **_control_outputs(self, state),
         }
+        if provider is not None:
+            result.update({
+                "exception_id": scenario.exception_id,
+                "investigator_mode": "specialist_agent",
+                "known_root_cause": scenario.known_root_cause,
+                "report": run.report.model_dump(),
+                "trace": [item.model_dump() for item in run.trace],
+                "telemetry": run.telemetry.as_dict(),
+                "report_evidence_is_narrative": True,
+            })
+        return result
 
     def run_transaction(
         self,
