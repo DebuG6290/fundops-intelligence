@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Iterable
 
+from src.models.evidence import EvidenceItem, EvidenceSourceType
 
-@dataclass(frozen=True)
-class Evidence:
-    evidence_id: str
-    source_type: str
-    source_name: str
-    claim: str
-    supports: bool = True
+
+# Transitional import alias for callers that used the old memory-local model.
+Evidence = EvidenceItem
 
 
 @dataclass(frozen=True)
@@ -21,10 +18,18 @@ class HistoricalCase:
     symptoms: tuple[str, ...]
     root_cause: str
     resolution: str
-    evidence: tuple[Evidence, ...] = field(default_factory=tuple)
+    evidence: tuple[EvidenceItem, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "case_id": self.case_id,
+            "exception_type": self.exception_type,
+            "title": self.title,
+            "symptoms": list(self.symptoms),
+            "root_cause": self.root_cause,
+            "resolution": self.resolution,
+            "evidence": [item.model_dump(mode="json") for item in self.evidence],
+        }
 
 
 def seed_historical_cases() -> list[HistoricalCase]:
@@ -37,8 +42,20 @@ def seed_historical_cases() -> list[HistoricalCase]:
             root_cause="STALE_PRICE",
             resolution="Validate primary and secondary price sources; refresh the stale price after operations approval.",
             evidence=(
-                Evidence("E001", "price_feed", "Primary vendor", "Primary and secondary prices differ materially."),
-                Evidence("E002", "historical_case", "CASE_001", "Similar NAV variance was caused by a stale price."),
+                EvidenceItem(
+                    evidence_id="E001",
+                    source_type=EvidenceSourceType.HISTORICAL_CASE,
+                    source_name="CASE_001",
+                    claim="Primary and secondary prices differ materially.",
+                    metadata={"evidence_role": "analogy", "original_source": "Primary vendor"},
+                ),
+                EvidenceItem(
+                    evidence_id="E002",
+                    source_type=EvidenceSourceType.HISTORICAL_CASE,
+                    source_name="CASE_001",
+                    claim="Similar NAV variance was caused by a stale price.",
+                    metadata={"evidence_role": "analogy"},
+                ),
             ),
         ),
         HistoricalCase(
@@ -49,7 +66,13 @@ def seed_historical_cases() -> list[HistoricalCase]:
             root_cause="MISSING_TRANSACTION",
             resolution="Reconcile recent trades and verify settlement status before rerunning NAV.",
             evidence=(
-                Evidence("E003", "transaction_system", "Trade blotter", "Expected transaction is absent from the position set."),
+                EvidenceItem(
+                    evidence_id="E003",
+                    source_type=EvidenceSourceType.HISTORICAL_CASE,
+                    source_name="CASE_002",
+                    claim="Expected transaction is absent from the position set.",
+                    metadata={"evidence_role": "analogy", "original_source": "Trade blotter"},
+                ),
             ),
         ),
         HistoricalCase(
@@ -60,7 +83,13 @@ def seed_historical_cases() -> list[HistoricalCase]:
             root_cause="CORPORATE_ACTION",
             resolution="Review effective corporate-action terms and verify position adjustment.",
             evidence=(
-                Evidence("E004", "corporate_actions", "CA feed", "A security event occurred on the valuation date."),
+                EvidenceItem(
+                    evidence_id="E004",
+                    source_type=EvidenceSourceType.HISTORICAL_CASE,
+                    source_name="CASE_003",
+                    claim="A security event occurred on the valuation date.",
+                    metadata={"evidence_role": "analogy", "original_source": "CA feed"},
+                ),
             ),
         ),
         HistoricalCase(
@@ -71,7 +100,13 @@ def seed_historical_cases() -> list[HistoricalCase]:
             root_cause="PENDING_SETTLEMENT",
             resolution="Check settlement status and counterparty confirmation.",
             evidence=(
-                Evidence("E005", "settlement_system", "Settlement queue", "Trade remains pending settlement."),
+                EvidenceItem(
+                    evidence_id="E005",
+                    source_type=EvidenceSourceType.HISTORICAL_CASE,
+                    source_name="CASE_004",
+                    claim="Trade remains pending settlement.",
+                    metadata={"evidence_role": "analogy", "original_source": "Settlement queue"},
+                ),
             ),
         ),
     ]

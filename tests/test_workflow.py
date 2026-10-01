@@ -1,10 +1,11 @@
 from src.agents.router import InvestigationRouter
 from src.agents.evidence_challenge import EvidenceChallengeAgent, apply_challenge
+from src.agents.resolution import ResolutionAgent
 from src.agents.schemas import InvestigationReport
 from src.agents.state import InvestigationState
 from src.agents.workflow import InvestigationWorkflow
-from src.agents.resolution import ResolutionAgent
 from src.agents.workflow import _state_from_specialist_report
+from src.models.evidence import EvidenceItem, EvidenceSourceType
 from src.data.scenarios import create_price_exception_scenario
 from src.data.scenarios_extra import (
     create_corporate_action_scenario,
@@ -14,8 +15,9 @@ from src.memory.cases import CaseMemory, seed_historical_cases
 
 
 class FakeProvider:
-    def __init__(self, tool_name):
+    def __init__(self, tool_name, root_cause="TEST_ROOT_CAUSE"):
         self.tool_name = tool_name
+        self.root_cause = root_cause
 
     def create_response(self, system_instructions, context, tools):
         import json
@@ -37,7 +39,7 @@ class FakeProvider:
             "id": "resp-2",
             "output": [],
             "output_text": json.dumps({
-                "probable_root_cause": "TEST_ROOT_CAUSE",
+                "probable_root_cause": self.root_cause,
                 "confidence": 0.9,
                 "observations": ["Tool evidence inspected."],
                 "supporting_evidence": ["Specialist tool output."],
@@ -56,10 +58,17 @@ def test_router_covers_all_supported_exception_types():
 
 
 def test_transaction_route_runs_specialist():
+    scenario = create_transaction_mismatch_scenario(seed=42)
+    transaction_id = scenario.actual_transactions.loc[
+        scenario.actual_transactions["status"].eq("MISMATCH"), "transaction_id"
+    ].iloc[0]
     workflow = InvestigationWorkflow(CaseMemory(seed_historical_cases()))
     result = workflow.run_transaction(
-        create_transaction_mismatch_scenario(),
-        FakeProvider("find_transaction_mismatches"),
+        scenario,
+        FakeProvider(
+            "find_transaction_mismatches",
+            f"TRANSACTION_QUANTITY_MISMATCH:{transaction_id}",
+        ),
     )
 
     assert result["route"] == "TRANSACTION_INVESTIGATOR"
@@ -71,13 +80,19 @@ def test_transaction_route_runs_specialist():
     assert result["challenge"]["challenged"] is True
     assert result["resolution"]["requires_human_approval"] is True
     assert result["status"] == "READY_FOR_HUMAN_REVIEW"
+    assert result["report_evidence_is_narrative"] is True
 
 
 def test_corporate_action_route_runs_specialist():
+    scenario = create_corporate_action_scenario(seed=42)
+    security_id = scenario.corporate_actions.iloc[0]["security_id"]
     workflow = InvestigationWorkflow(CaseMemory(seed_historical_cases()))
     result = workflow.run_corporate_action(
-        create_corporate_action_scenario(),
-        FakeProvider("find_effective_corporate_actions"),
+        scenario,
+        FakeProvider(
+            "find_effective_corporate_actions",
+            f"CORPORATE_ACTION:{security_id}",
+        ),
     )
 
     assert result["route"] == "CORPORATE_ACTION_INVESTIGATOR"
@@ -104,7 +119,18 @@ def _specialist_state(specialist_type, counter_evidence=None):
         counter_evidence=counter_evidence or [],
         recommended_next_step="Human review.",
     )
-    return _state_from_specialist_report(scenario, report)
+    evidence_type = (
+        EvidenceSourceType.TRANSACTION_RECORD
+        if specialist_type == "transaction"
+        else EvidenceSourceType.CORPORATE_ACTION_RECORD
+    )
+    evidence = [EvidenceItem(
+        source_type=evidence_type,
+        source_name="test-record",
+        claim="The record was returned by a deterministic test tool.",
+        supports="SPECIALIST_ROOT_CAUSE",
+    )]
+    return _state_from_specialist_report(scenario, report, evidence)
 
 
 def test_transaction_ambiguous_report_escalates():
@@ -164,7 +190,7 @@ def test_missing_specialist_supporting_evidence_escalates():
     apply_challenge(state, challenge)
 
     assert state.status == "ESCALATE"
-    assert "no supporting evidence" in challenge.recommendation
+    assert "no primary evidence" in challenge.recommendation
     assert ResolutionAgent().resolve(state).decision == "INVESTIGATE_FURTHER"
 
 

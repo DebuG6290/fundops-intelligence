@@ -1,8 +1,10 @@
 from src.agents.evidence_challenge import EvidenceChallengeAgent, apply_challenge
 from src.agents.resolution import ResolutionAgent
 from src.agents.rule_based_investigator import RuleBasedInvestigator
+from src.agents.state import InvestigationState
 from src.data.scenarios import create_price_exception_scenario
 from src.memory.cases import CaseMemory, seed_historical_cases
+from src.models.evidence import EvidenceItem, EvidenceSourceType
 
 
 def test_challenge_preserves_supported_price_hypothesis():
@@ -91,3 +93,21 @@ def test_resolution_escalates_ambiguous_case_to_investigate_further():
 
     assert recommendation.decision == "INVESTIGATE_FURTHER"
     assert recommendation.requires_human_approval is True
+
+
+def test_structured_counter_evidence_still_caps_confidence_and_escalates():
+    state = InvestigationState(exception={"exception_type": "NAV_DISCREPANCY"})
+    state.add_hypothesis("PRICE_EXCEPTION:SEC-1", "Price variance hypothesis.", 0.95)
+    state.add_evidence(EvidenceItem(
+        source_type=EvidenceSourceType.PRICE_SOURCE,
+        source_name="SEC-1",
+        claim="Source records challenge the price exception hypothesis.",
+        contradicts="PRICE_EXCEPTION:SEC-1",
+    ))
+
+    challenge = EvidenceChallengeAgent().review(state)
+    apply_challenge(state, challenge)
+
+    assert challenge.contradiction_found is True
+    assert challenge.final_confidence == 0.35
+    assert state.status == "ESCALATE"

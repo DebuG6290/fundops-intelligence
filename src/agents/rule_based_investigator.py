@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.agents.evidence import evidence_from_tool_result
 from src.agents.state import InvestigationState
 from src.data.scenarios import InvestigationScenario
 from src.memory.cases import CaseMemory
@@ -7,6 +8,7 @@ from src.tools.memory_tools import search_historical_cases_tool
 from src.tools.nav_tools import (
     calculate_nav_variance_tool,
     compare_price_sources_tool,
+    get_fund_snapshot_tool,
     identify_top_contributors_tool,
 )
 
@@ -26,12 +28,32 @@ class RuleBasedInvestigator:
         state = InvestigationState(
             exception=calculate_nav_variance_tool(scenario)
         )
+        state.add_evidence(
+            evidence_from_tool_result(
+                "calculate_nav_variance", state.exception, scenario.exception_id
+            )[0]
+        )
+
+        fund_snapshot = get_fund_snapshot_tool(scenario)
+        state.add_observation(
+            "fund_snapshot", fund_snapshot, "deterministic_fund_valuation"
+        )
+        state.add_evidence(
+            evidence_from_tool_result(
+                "get_fund_snapshot", fund_snapshot, scenario.exception_id
+            )[0]
+        )
 
         contributors = identify_top_contributors_tool(scenario, top_n=3)
         state.add_observation(
             "top_contributors",
             contributors,
             "deterministic_contribution_analysis",
+        )
+        state.evidence.extend(
+            evidence_from_tool_result(
+                "identify_top_contributors", contributors, scenario.exception_id
+            )
         )
 
         if not contributors:
@@ -46,6 +68,12 @@ class RuleBasedInvestigator:
             price_check,
             "price_comparison_tool",
         )
+        if price_check.get("found"):
+            state.evidence.extend(
+                evidence_from_tool_result(
+                    "compare_price_sources", price_check, scenario.exception_id
+                )
+            )
 
         historical = search_historical_cases_tool(
             self.memory,
@@ -57,6 +85,11 @@ class RuleBasedInvestigator:
             "historical_cases",
             historical,
             "case_memory",
+        )
+        state.evidence.extend(
+            evidence_from_tool_result(
+                "search_historical_cases", historical, scenario.exception_id
+            )
         )
 
         if (

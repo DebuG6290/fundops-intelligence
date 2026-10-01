@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,13 @@ class Hypothesis(BaseModel):
 
 
 class InvestigationReport(BaseModel):
+    """Compatibility report returned by the specialist LLM.
+
+    Evidence text fields remain during the migration, but they are narrative
+    claims, not factual EvidenceItems. Workflow code must build structured
+    evidence only from deterministic or tool outputs.
+    """
+
     probable_root_cause: str
     confidence: float = Field(ge=0.0, le=1.0)
     observations: list[str]

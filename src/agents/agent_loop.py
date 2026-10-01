@@ -4,15 +4,18 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.agents.evidence import evidence_from_tool_result
 from src.agents.schemas import InvestigationReport, ToolTrace
-from src.agents.tool_registry import ToolRegistry
 from src.agents.telemetry import AgentTelemetry
+from src.agents.tool_registry import ToolRegistry
+from src.models.evidence import EvidenceItem
 
 
 @dataclass
 class AgentRun:
     report: InvestigationReport | None = None
     trace: list[ToolTrace] = field(default_factory=list)
+    evidence: list[EvidenceItem] = field(default_factory=list)
     raw_outputs: list[str] = field(default_factory=list)
     telemetry: AgentTelemetry = field(default_factory=AgentTelemetry)
 
@@ -77,6 +80,19 @@ class InvestigationAgentLoop:
                             tool_name=call.name,
                             arguments=arguments,
                             result=result,
+                        )
+                    )
+                    exception = context.get("exception")
+                    exception_id = context.get("exception_id") or (
+                        exception.get("exception_id", "unknown")
+                        if isinstance(exception, dict)
+                        else "unknown"
+                    )
+                    run.evidence.extend(
+                        evidence_from_tool_result(
+                            call.name,
+                            result,
+                            exception_id=exception_id,
                         )
                     )
 

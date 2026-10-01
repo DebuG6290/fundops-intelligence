@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from src.agents.nav_agent import NavInvestigationAgent
 from src.data.scenarios import create_price_exception_scenario
+from src.models.evidence import EvidenceSourceType
 from src.memory.cases import CaseMemory, seed_historical_cases
 
 
@@ -48,3 +49,6 @@ def test_nav_agent_has_real_domain_tools():
 
     assert run.report.probable_root_cause == "PRICE_EXCEPTION"
     assert run.trace[0].tool_name == "identify_top_contributors"
+    assert run.evidence
+    assert run.evidence[0].source_type == EvidenceSourceType.DETERMINISTIC_ANALYTICS
+    assert run.evidence[0].metadata["security_id"] == scenario.culprit_security_id
