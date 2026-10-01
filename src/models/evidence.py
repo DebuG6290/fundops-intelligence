@@ -31,6 +31,10 @@ class EvidenceItem(BaseModel):
     source_type: EvidenceSourceType
     source_name: str = Field(min_length=1)
     claim: str = Field(min_length=1)
+    exception_id: str | None = None
+    supports_hypothesis: str | None = None
+    contradicts_hypothesis: str | None = None
+    # Transitional root-cause relationships retained for old serialized items.
     supports: str | None = None
     contradicts: str | None = None
     reliability: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -43,7 +47,10 @@ class EvidenceItem(BaseModel):
             raise ValueError("Value must not be blank")
         return value
 
-    @field_validator("supports", "contradicts", mode="before")
+    @field_validator(
+        "exception_id", "supports_hypothesis", "contradicts_hypothesis",
+        "supports", "contradicts", mode="before"
+    )
     @classmethod
     def relationship_target_is_not_blank(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -52,14 +59,16 @@ class EvidenceItem(BaseModel):
 
     @model_validator(mode="after")
     def relationship_is_unambiguous(self) -> EvidenceItem:
-        if self.supports and self.contradicts:
+        has_support = bool(self.supports_hypothesis or self.supports)
+        has_contradiction = bool(self.contradicts_hypothesis or self.contradicts)
+        if has_support and has_contradiction:
             raise ValueError("Evidence cannot support and contradict simultaneously")
         return self
 
     @property
     def direction(self) -> str:
-        if self.supports:
+        if self.supports_hypothesis or self.supports:
             return "SUPPORTS"
-        if self.contradicts:
+        if self.contradicts_hypothesis or self.contradicts:
             return "CONTRADICTS"
         return "CONTEXT"

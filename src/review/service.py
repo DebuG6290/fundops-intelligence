@@ -36,17 +36,34 @@ class HumanReviewService:
 
         for reference in supporting:
             item = evidence_by_id.get(reference)
-            if item is None or not item.supports:
+            if item is None or not (item.supports_hypothesis or item.supports):
                 raise ValueError(f"Unknown or non-supporting evidence reference: {reference}")
+            if not self._matches_review_target(item.supports_hypothesis, item.supports, validated):
+                raise ValueError(f"Supporting evidence does not support the reviewed hypothesis: {reference}")
         for reference in counter:
             item = evidence_by_id.get(reference)
-            if item is None or not item.contradicts:
+            if item is None or not (item.contradicts_hypothesis or item.contradicts):
                 raise ValueError(f"Unknown or non-counter evidence reference: {reference}")
+            if not self._matches_review_target(item.contradicts_hypothesis, item.contradicts, validated):
+                raise ValueError(f"Counter-evidence does not contradict the reviewed hypothesis: {reference}")
+        for reference in supporting | counter:
+            item = evidence_by_id[reference]
+            if item.exception_id and item.exception_id != validated.exception_id:
+                raise ValueError(f"Evidence belongs to a different exception: {reference}")
 
         record = HumanReviewRecord(**validated.model_dump())
         self._records[record.review_id] = record
         self._history_by_exception[record.exception_id].append(record.review_id)
         return record
+
+    @staticmethod
+    def _matches_review_target(
+        hypothesis_id: str | None, legacy_root: str | None,
+        submission: HumanReviewSubmission,
+    ) -> bool:
+        if hypothesis_id:
+            return hypothesis_id == submission.agent_hypothesis_id
+        return bool(legacy_root and legacy_root == submission.agent_root_cause)
 
     def get_review(self, review_id: str) -> HumanReviewRecord | None:
         return self._records.get(review_id)

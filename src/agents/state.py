@@ -33,6 +33,7 @@ class InvestigationState:
         confidence: float,
     ) -> None:
         self.hypotheses.append({
+            "hypothesis_id": f"HYP-{len(self.hypotheses) + 1:03d}",
             "root_cause": root_cause,
             "rationale": rationale,
             "confidence": confidence,

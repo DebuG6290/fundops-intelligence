@@ -19,6 +19,8 @@ class HistoricalCase:
     root_cause: str
     resolution: str
     evidence: tuple[EvidenceItem, ...] = field(default_factory=tuple)
+    human_validated: bool = False
+    review_metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -29,6 +31,8 @@ class HistoricalCase:
             "root_cause": self.root_cause,
             "resolution": self.resolution,
             "evidence": [item.model_dump(mode="json") for item in self.evidence],
+            "human_validated": self.human_validated,
+            "review_metadata": dict(self.review_metadata),
         }
 
 
@@ -119,7 +123,18 @@ class CaseMemory:
         self._cases = list(cases)
 
     def add(self, case: HistoricalCase) -> None:
+        if any(existing.case_id == case.case_id for existing in self._cases):
+            raise ValueError(f"Case already exists: {case.case_id}")
         self._cases.append(case)
+
+    def next_case_id(self) -> str:
+        numbers = [
+            int(case.case_id.removeprefix("CASE_"))
+            for case in self._cases
+            if case.case_id.startswith("CASE_")
+            and case.case_id.removeprefix("CASE_").isdigit()
+        ]
+        return f"CASE_{max(numbers, default=0) + 1:03d}"
 
     def search(
         self,

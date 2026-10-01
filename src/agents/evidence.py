@@ -30,6 +30,7 @@ def evidence_from_tool_result(
     if tool_name == "search_historical_cases":
         return [
             EvidenceItem(
+                exception_id=exception_id,
                 source_type=EvidenceSourceType.HISTORICAL_CASE,
                 source_name=str(case.get("case_id", "unknown-case")),
                 claim=(
@@ -132,6 +133,7 @@ def evidence_from_tool_result(
         if tool_name == "compare_price_sources":
             items.append(
                 EvidenceItem(
+                    exception_id=exception_id,
                     source_type=source_type,
                     source_name=source_name,
                     claim=claim,
@@ -143,6 +145,7 @@ def evidence_from_tool_result(
         else:
             items.append(
                 EvidenceItem(
+                    exception_id=exception_id,
                     source_type=source_type,
                     source_name=source_name,
                     claim=claim,

@@ -65,8 +65,11 @@ class EvidenceChallengeAgent:
 
         contradiction = False
         ambiguity = False
+        leading_id = leading.get("hypothesis_id")
         insufficient = not any(
-            item.supports == leading["root_cause"] for item in primary_evidence
+            item.supports_hypothesis == leading_id
+            or (not item.supports_hypothesis and item.supports == leading["root_cause"])
+            for item in primary_evidence
         )
 
         # Escalate when multiple plausible hypotheses are too close to call.
@@ -84,7 +87,11 @@ class EvidenceChallengeAgent:
                     isinstance(value, dict) and value.get("contradicts")
                 ):
                     contradiction = True
-        if any(item.contradicts for item in state.evidence):
+        if any(
+            item.contradicts_hypothesis == leading_id
+            or (not item.contradicts_hypothesis and item.contradicts == leading["root_cause"])
+            for item in state.evidence
+        ):
             contradiction = True
 
         if leading["root_cause"] == "PRICE_EXCEPTION":

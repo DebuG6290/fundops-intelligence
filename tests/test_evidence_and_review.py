@@ -73,6 +73,18 @@ def test_evidence_item_has_typed_source_relationship_and_serialization():
     assert serialized["metadata"]["actual_quantity"] == 650
 
 
+def test_hypothesis_relationship_and_exception_provenance_survive_serialization():
+    item = EvidenceItem(
+        evidence_id="E-LINKED", source_type=EvidenceSourceType.TRANSACTION_RECORD,
+        source_name="TX-1", claim="Reconciled quantity differs.",
+        exception_id="EXC-1", supports_hypothesis="HYP-001",
+    )
+    payload = item.model_dump(mode="json")
+    assert payload["exception_id"] == "EXC-1"
+    assert payload["supports_hypothesis"] == "HYP-001"
+    assert EvidenceItem.model_validate(payload) == item
+
+
 def test_counter_evidence_is_explicit_and_not_also_supporting():
     item = EvidenceItem(
         source_type=EvidenceSourceType.PRICE_SOURCE,
@@ -195,6 +207,36 @@ def test_primary_evidence_relevant_to_exception_but_not_hypothesis_escalates():
     assert result["resolution"]["decision"] == "INVESTIGATE_FURTHER"
 
 
+def test_challenge_uses_hypothesis_id_and_ignores_unrelated_link():
+    state = InvestigationState(exception={"exception_id": "EXC-1"})
+    state.add_hypothesis("ROOT-1", "leading", 0.9)
+    state.add_evidence(EvidenceItem(
+        source_type=EvidenceSourceType.TRANSACTION_RECORD, source_name="TX-1",
+        claim="Record supports a different hypothesis.", supports_hypothesis="HYP-999",
+    ))
+    challenge = EvidenceChallengeAgent().review(state)
+    assert challenge.insufficient_evidence is True
+    assert challenge.final_confidence <= 0.35
+
+
+def test_challenge_escalates_on_counter_evidence_linked_to_leading_hypothesis():
+    state = InvestigationState(exception={"exception_id": "EXC-1"})
+    state.add_hypothesis("ROOT-1", "leading", 0.9)
+    state.add_evidence(EvidenceItem(
+        source_type=EvidenceSourceType.TRANSACTION_RECORD, source_name="TX-1",
+        claim="Primary record supports the root-cause category.",
+        supports_hypothesis="HYP-001",
+    ))
+    state.add_evidence(EvidenceItem(
+        source_type=EvidenceSourceType.TOOL_RESULT, source_name="confirmatory-check",
+        claim="Another source contradicts the leading hypothesis.",
+        contradicts_hypothesis="HYP-001",
+    ))
+    challenge = EvidenceChallengeAgent().review(state)
+    assert challenge.contradiction_found is True
+    assert challenge.final_confidence <= 0.35
+
+
 def test_historical_case_records_are_analogies_not_primary_evidence():
     retrieved = [case.to_dict() for case in seed_historical_cases()[:1]]
     evidence = evidence_from_tool_result(
@@ -232,7 +274,7 @@ def _review_evidence():
             source_type=EvidenceSourceType.TRANSACTION_RECORD,
             source_name="TX-1",
             claim="Mismatch exists.",
-            supports="exception:EXC-1",
+            supports="ROOT-1",
         ),
         EvidenceItem(
             evidence_id="CTR-1",
@@ -311,6 +353,51 @@ def test_review_references_must_exist_and_match_evidence_direction():
         service.submit_review(payload, _review_evidence())
 
 
+def test_review_rejects_evidence_linked_to_a_different_hypothesis():
+    service = HumanReviewService()
+    item = EvidenceItem(
+        evidence_id="SUP-1", source_type=EvidenceSourceType.TRANSACTION_RECORD,
+        source_name="TX-1", claim="It supports another hypothesis.",
+        exception_id="EXC-1", supports_hypothesis="HYP-002",
+    )
+    payload = _submission(HumanDecision.ACCEPT).model_dump()
+    payload["agent_hypothesis_id"] = "HYP-001"
+    payload["supporting_evidence_references"] = ("SUP-1",)
+    payload["counter_evidence_references"] = ()
+    with pytest.raises(ValueError, match="does not support the reviewed hypothesis"):
+        service.submit_review(payload, [item])
+
+
+def test_review_rejects_counter_evidence_linked_to_a_different_hypothesis():
+    service = HumanReviewService()
+    item = EvidenceItem(
+        evidence_id="CTR-1", source_type=EvidenceSourceType.TOOL_RESULT,
+        source_name="reconciliation", claim="It contradicts another hypothesis.",
+        exception_id="EXC-1", contradicts_hypothesis="HYP-002",
+    )
+    payload = _submission(HumanDecision.ACCEPT).model_dump()
+    payload["agent_hypothesis_id"] = "HYP-001"
+    payload["supporting_evidence_references"] = ()
+    payload["counter_evidence_references"] = ("CTR-1",)
+    with pytest.raises(ValueError, match="does not contradict the reviewed hypothesis"):
+        service.submit_review(payload, [item])
+
+
+def test_review_rejects_evidence_from_a_different_exception():
+    service = HumanReviewService()
+    item = EvidenceItem(
+        evidence_id="SUP-1", source_type=EvidenceSourceType.TRANSACTION_RECORD,
+        source_name="TX-1", claim="Supports hypothesis.",
+        exception_id="EXC-OTHER", supports_hypothesis="HYP-001",
+    )
+    payload = _submission(HumanDecision.ACCEPT).model_dump()
+    payload["agent_hypothesis_id"] = "HYP-001"
+    payload["supporting_evidence_references"] = ("SUP-1",)
+    payload["counter_evidence_references"] = ()
+    with pytest.raises(ValueError, match="different exception"):
+        service.submit_review(payload, [item])
+
+
 def test_review_history_is_append_only_and_ordered():
     service = HumanReviewService()
     first = service.submit_review(_submission(HumanDecision.ACCEPT), _review_evidence())
@@ -361,3 +448,86 @@ def test_workflow_records_explicit_human_decision_without_auto_acceptance():
     assert record.human_decision is HumanDecision.INVESTIGATE_FURTHER
     assert record.agent_recommendation.startswith("REVIEW_RECOMMENDATION:")
     assert workflow.review_service.get_review_history(record.exception_id) == (record,)
+
+
+@pytest.mark.parametrize(
+    "scenario_name,root_cause_key",
+    [
+        ("NAV Discrepancy", "PRICE_EXCEPTION"),
+        ("Transaction Mismatch", "TRANSACTION_QUANTITY_MISMATCH"),
+        ("Corporate Action", "CORPORATE_ACTION"),
+    ],
+)
+def test_reproducible_demo_workbench_runs_all_exception_types(scenario_name, root_cause_key):
+    from src.demo.workbench import DemoWorkbench
+
+    workbench = DemoWorkbench()
+    result = workbench.investigate(scenario_name)
+    assert result["probable_root_cause"].startswith(root_cause_key)
+    assert result["human_review_required"] is True
+    assert result["evidence"]
+    assert result.get("investigator_mode", "deterministic_baseline") in {
+        "deterministic_demo", "deterministic_baseline"
+    }
+
+
+def test_accepted_review_writes_case_and_future_search_retrieves_it():
+    from src.demo.workbench import DemoWorkbench
+
+    workbench = DemoWorkbench()
+    result = workbench.investigate("Transaction Mismatch")
+    record = workbench.submit_review(result, HumanDecision.ACCEPT, "Confirmed against transaction records.")
+    case = workbench.accepted_case(record.review_id)
+    assert case is not None
+    assert case.human_validated is True
+    assert case.review_metadata["review_id"] == record.review_id
+    retrieved = workbench.search_memory(case.root_cause, exception_type=case.exception_type)
+    assert case.case_id in {item.case_id for item in retrieved}
+    next_investigation = workbench.investigate("Transaction Mismatch")
+    assert case.case_id in {
+        item["source_name"] for item in next_investigation["evidence"]
+        if item["source_type"] == EvidenceSourceType.HISTORICAL_CASE.value
+    }
+
+
+def test_accepted_case_is_retrieved_as_analogy_by_future_investigation():
+    from src.demo.workbench import DemoWorkbench
+
+    workbench = DemoWorkbench()
+    first = workbench.investigate(workbench.NAV)
+    record = workbench.submit_review(first, HumanDecision.ACCEPT, "Confirmed after price-source review.")
+    case = workbench.accepted_case(record.review_id)
+    assert case is not None
+    subsequent = workbench.investigate(workbench.NAV)
+    historical_ids = {
+        item["source_name"] for item in subsequent["evidence"]
+        if item["source_type"] == EvidenceSourceType.HISTORICAL_CASE.value
+    }
+    assert case.case_id in historical_ids
+    assert subsequent["challenge"]["insufficient_evidence"] is False
+
+
+@pytest.mark.parametrize("decision", [HumanDecision.REJECT, HumanDecision.INVESTIGATE_FURTHER])
+def test_non_accept_human_decisions_do_not_write_confirmed_memory(decision):
+    from src.demo.workbench import DemoWorkbench
+
+    workbench = DemoWorkbench()
+    result = workbench.investigate("Corporate Action")
+    count_before = len(workbench.memory._cases)
+    record = workbench.submit_review(result, decision, "Not accepted as a confirmed case.")
+    assert workbench.accepted_case(record.review_id) is None
+    assert len(workbench.memory._cases) == count_before
+
+
+def test_insufficient_evidence_demo_path_escalates():
+    from src.demo.workbench import DemoWorkbench
+
+    workbench = DemoWorkbench()
+    result = workbench.investigate("Insufficient Evidence (NAV)")
+    assert result["status"] == "ESCALATE"
+    assert result["challenge"]["insufficient_evidence"] is True
+    assert result["resolution"]["decision"] == "INVESTIGATE_FURTHER"
+    count_before = len(workbench.memory._cases)
+    record = workbench.submit_review(result, HumanDecision.ACCEPT, "No root cause can be confirmed yet.")
+    assert workbench.accepted_case(record.review_id) is None
+    assert len(workbench.memory._cases) == count_before

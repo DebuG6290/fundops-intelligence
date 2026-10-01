@@ -17,6 +17,7 @@ class HumanDecision(str, Enum):
 class HumanReviewSubmission(BaseModel):
     exception_id: str = Field(min_length=1)
     agent_root_cause: str | None
+    agent_hypothesis_id: str | None = None
     agent_confidence: float = Field(ge=0.0, le=1.0)
     agent_recommendation: str = Field(min_length=1)
     supporting_evidence_references: tuple[str, ...] = ()
@@ -39,6 +40,13 @@ class HumanReviewSubmission(BaseModel):
     def root_cause_is_not_blank(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             raise ValueError("Value must not be blank")
+        return value
+
+    @field_validator("agent_hypothesis_id", mode="before")
+    @classmethod
+    def hypothesis_id_is_not_blank(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("Hypothesis ID must not be blank")
         return value
 
     @field_validator(

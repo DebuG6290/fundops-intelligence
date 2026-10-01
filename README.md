@@ -20,6 +20,21 @@ A pro-code decision-support platform that investigates fund-operation exceptions
 ## Important boundary
 This project is a research/prototype system. It is not a fund accounting system, investment advisor, trading system, or autonomous financial decision-maker. It uses synthetic data and does not contain proprietary J.P. Morgan data.
 
+## Run the demo workbench
+
+Install `requirements.txt`, then run:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+The reproducible deterministic demo is the default and needs no LLM key. It
+covers NAV, transaction mismatch, corporate action, and an insufficient
+evidence escalation path. If `OPENAI_API_KEY` is configured, the UI also
+offers an optional live LLM specialist mode for transaction and corporate
+action investigations. Human review and case memory are process-local and
+reset when Streamlit restarts. See [the demo flow](docs/demo_flow.md).
+
 ## Repository structure
 - `src/analytics`: deterministic financial calculations
 - `src/data`: synthetic data generation

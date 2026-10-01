@@ -1,17 +1,36 @@
 # Architecture
 
-## Target workflow
+## End-to-end workflow
 
-Fund data -> Deterministic analytics -> Exception -> Router -> Specialist investigation -> Structured evidence -> Evidence challenge -> Resolution recommendation -> Explicit human decision -> Audit history
+```text
+Synthetic fund data
+  -> deterministic financial analytics
+  -> exception and router
+  -> specialist investigation
+  -> structured evidence linked to hypothesis IDs
+  -> evidence challenge
+  -> resolution recommendation
+  -> explicit human decision and audit record
+  -> accepted case memory
+  -> future retrieval as an analogy
+```
 
-## Architectural boundary
+Deterministic code owns financial arithmetic, thresholds, and measurable calculations. Specialists plan investigations, call tools, and propose hypotheses. Evidence is created from deterministic analytics and actual tool outputs; specialist prose is not upgraded to fact. The challenge requires primary evidence linked to the leading hypothesis and escalates for missing, unrelated, conflicting, or ambiguous evidence.
 
-Deterministic code owns arithmetic, thresholds and measurable financial calculations. Agents own investigation planning, tool selection, hypothesis generation and evidence synthesis.
+`EvidenceItem.exception_id` preserves case provenance. `supports_hypothesis` and `contradicts_hypothesis` use stable per-investigation identifiers such as `HYP-001`; root-cause strings are retained only as a compatibility representation for older records and are not the primary workflow relationship.
 
-The system should never ask an LLM to calculate NAV when deterministic code can do so.
+Human review records `ACCEPT`, `REJECT`, or `INVESTIGATE_FURTHER` in an append-only in-memory service. Only explicit `ACCEPT` writes a `human_validated` case candidate to memory. All decisions remain separate from the agent recommendation, and neither review nor memory has an interface to change NAV, holdings, transactions, prices, or corporate actions.
 
-Structured evidence is created from deterministic analytics and executed tool
-results. Specialist report prose remains an observation and is not promoted to
-financial evidence. Historical cases are labeled as analogies. Human decisions
-are recorded in an append-only in-memory review service; they do not mutate
-financial records or automatically update case memory.
+The Streamlit workbench is reproducible by default. NAV uses the deterministic baseline; transaction and corporate-action demo modes use actual deterministic tool results and are labeled as demo investigations. Live LLM specialist mode is optional when configured. No demo mode requires an LLM or network.
+
+## Future Production Extensions
+
+- Persistent review and case storage (for example, PostgreSQL)
+- Vector or hybrid semantic retrieval beyond transparent keyword search
+- Multiple ranked hypotheses in specialist reports
+- Immutable source snapshots, provider attestations, and correlation IDs
+- Authentication, authorization, persistence, and concurrency controls
+- Advanced evidence attribution, calibration, review-agreement, latency, and cost evaluation
+- Governed case lifecycle: versioning, retirement, and confidence decay
+
+This is a capstone prototype. Reviews and cases are process-local, accepted cases are analogy candidates rather than independently verified ground truth, and the demo investigator is not a substitute for evaluating live LLM quality.
