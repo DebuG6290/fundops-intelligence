@@ -34,6 +34,20 @@ class EvidenceChallengeAgent:
             )
 
         leading = state.hypotheses[0]
+        specialist_report_without_evidence = (
+            state.exception.get("exception_type")
+            in {"TRANSACTION_MISMATCH", "CORPORATE_ACTION"}
+            and not state.evidence
+        )
+        if specialist_report_without_evidence:
+            return ChallengeResult(
+                challenged=True,
+                contradiction_found=False,
+                ambiguity_found=False,
+                final_confidence=min(float(leading["confidence"]), 0.35),
+                recommendation="Escalate: no supporting evidence available.",
+            )
+
         price_check = next(
             (
                 item["value"]
@@ -98,7 +112,16 @@ def apply_challenge(
 ) -> InvestigationState:
     state.confidence = challenge.final_confidence
 
-    if challenge.contradiction_found or challenge.ambiguity_found:
+    if (
+        not state.hypotheses
+        or (
+            state.exception.get("exception_type")
+            in {"TRANSACTION_MISMATCH", "CORPORATE_ACTION"}
+            and not state.evidence
+        )
+        or challenge.contradiction_found
+        or challenge.ambiguity_found
+    ):
         state.status = "ESCALATE"
         state.recommended_action = challenge.recommendation
     else:
