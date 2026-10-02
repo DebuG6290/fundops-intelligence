@@ -21,6 +21,8 @@ class HistoricalCase:
     evidence: tuple[EvidenceItem, ...] = field(default_factory=tuple)
     human_validated: bool = False
     review_metadata: dict = field(default_factory=dict)
+    investigation_path: tuple[str, ...] = field(default_factory=tuple)
+    useful_evidence: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
         return {
@@ -33,6 +35,8 @@ class HistoricalCase:
             "evidence": [item.model_dump(mode="json") for item in self.evidence],
             "human_validated": self.human_validated,
             "review_metadata": dict(self.review_metadata),
+            "investigation_path": list(self.investigation_path),
+            "useful_evidence": list(self.useful_evidence),
         }
 
 
@@ -45,6 +49,8 @@ def seed_historical_cases() -> list[HistoricalCase]:
             symptoms=("nav variance", "price mismatch", "vendor discrepancy"),
             root_cause="STALE_PRICE",
             resolution="Validate primary and secondary price sources; refresh the stale price after operations approval.",
+            investigation_path=("search_historical_cases", "identify_top_contributors", "compare_price_sources"),
+            useful_evidence=("NAV contribution", "price-source comparison"),
             evidence=(
                 EvidenceItem(
                     evidence_id="E001",
@@ -69,6 +75,8 @@ def seed_historical_cases() -> list[HistoricalCase]:
             symptoms=("nav variance", "position mismatch", "transaction"),
             root_cause="MISSING_TRANSACTION",
             resolution="Reconcile recent trades and verify settlement status before rerunning NAV.",
+            investigation_path=("search_historical_cases", "identify_top_contributors", "check_transaction_activity"),
+            useful_evidence=("NAV contribution", "transaction reconciliation"),
             evidence=(
                 EvidenceItem(
                     evidence_id="E003",
@@ -86,6 +94,8 @@ def seed_historical_cases() -> list[HistoricalCase]:
             symptoms=("nav variance", "corporate action", "security event"),
             root_cause="CORPORATE_ACTION",
             resolution="Review effective corporate-action terms and verify position adjustment.",
+            investigation_path=("search_historical_cases", "identify_top_contributors", "check_corporate_actions"),
+            useful_evidence=("NAV contribution", "corporate-action status"),
             evidence=(
                 EvidenceItem(
                     evidence_id="E004",
@@ -103,6 +113,8 @@ def seed_historical_cases() -> list[HistoricalCase]:
             symptoms=("transaction mismatch", "pending", "settlement"),
             root_cause="PENDING_SETTLEMENT",
             resolution="Check settlement status and counterparty confirmation.",
+            investigation_path=("search_historical_cases", "find_transaction_mismatches"),
+            useful_evidence=("transaction reconciliation",),
             evidence=(
                 EvidenceItem(
                     evidence_id="E005",
@@ -228,3 +240,4 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if not left_norm or not right_norm:
         return 0.0
     return sum(float(a) * float(b) for a, b in zip(left, right)) / (left_norm * right_norm)
+
