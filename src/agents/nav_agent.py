@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.agent_loop import AgentRun, InvestigationAgentLoop
+from src.agents.stateful_investigation import StatefulInvestigationLoop
 from src.llm.sarvam_provider import SarvamProvider
 from src.agents.prompts import SYSTEM_PROMPT
 from src.agents.tool_registry import ToolDefinition, ToolRegistry
@@ -139,4 +140,20 @@ class NavInvestigationAgent:
         )
         run.evidence.extend(evidence_from_tool_result("search_historical_cases", historical_cases, scenario.exception_id))
         return run
+
+    def investigate_statefully(self, scenario: InvestigationScenario) -> AgentRun:
+        """Live cockpit path; the legacy generic loop remains for compatibility."""
+        exception = calculate_nav_variance_tool(scenario)
+        context = {
+            "exception": exception,
+            "known_exception_type": "NAV_DISCREPANCY",
+            "fund_id": str(scenario.dataset.funds.iloc[0]["fund_id"]),
+            "investigation_objective": "Find a supported cause or escalate for human review.",
+            "historical_memory_rule": "Search is optional; only human-validated cases may guide check priority and never prove the current cause.",
+        }
+        return StatefulInvestigationLoop(
+            provider=self.provider,
+            tools=build_nav_tool_registry(scenario, self.memory),
+            max_turns=8,
+        ).run(context, exception_id=scenario.exception_id)
 

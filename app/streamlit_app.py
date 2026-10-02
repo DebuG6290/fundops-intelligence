@@ -18,6 +18,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 from evaluation.benchmark import evaluate_rules_and_ml
 from src.data.benchmark import generate_benchmark_dataset
 from src.demo.final_workbench import FinalDemoWorkbench
+from src.demo.timeline_view import render_investigation_timeline
 from src.llm.sarvam_provider import SarvamProvider
 from src.review.models import HumanDecision
 
@@ -55,6 +56,10 @@ def _label(value: Any) -> str:
         "TOOL_RESULT": "Tool result",
     }
     return labels.get(cause, labels.get(text, text.replace("_", " ").title()))
+
+
+def _render_investigation_timeline(events: list[dict[str, Any]]) -> None:
+    render_investigation_timeline(st, events, _label)
 
 st.set_page_config(page_title="FundOps Intelligence", page_icon="◈", layout="wide")
 st.markdown("""
@@ -221,11 +226,17 @@ if result:
                 st.success(challenge.get("recommendation", "Ready for human review."))
 
     with investigation:
+        if result.get("timeline"):
+            st.subheader("Investigation timeline")
+            st.caption("Structured decisions and short audit reasons only; no hidden model reasoning is stored.")
+            _render_investigation_timeline(result["timeline"])
         st.subheader("Operational Memory")
         memory_context = workbench.get_memory_preview(result)
         retrieved_cases = [case for case in memory_context.get("retrieved_cases", []) if case.get("human_validated") is True]
         st.write(f"Human-validated historical analogies retrieved: {len(retrieved_cases)}")
-        for case in retrieved_cases:
+        for case in memory_context.get("retrieved_cases", []):
+            if case.get("human_validated") is not True:
+                continue
             with st.expander(f"{case.get('case_id', 'Case')} · {case.get('title', 'Historical case')}"):
                 st.write("Human-validated historical analogy · not proof of the current root cause")
                 st.write(f"**Prior case root cause:** {_label(case.get('historical_root_cause'))}")
@@ -238,8 +249,12 @@ if result:
         st.markdown("**How memory influenced this investigation**")
         if influence:
             st.write(influence)
+        elif retrieved_cases and result.get("investigator_mode") == "specialist_agent":
+            st.write("Validated analogies were available for tool prioritization; the live investigator selected each next check from current evidence.")
         elif retrieved_cases:
             st.write("Validated analogies were retrieved, but none changed the default order of current-case checks.")
+        elif result.get("investigator_mode") == "specialist_agent":
+            st.write("No validated analogy was retrieved; live tool choices were made from current-case evidence.")
         else:
             st.write("No relevant human-validated analogy was retrieved; the default check order was used.")
         default_order = memory_context.get("default_check_order", [])
@@ -420,18 +435,21 @@ if result:
         st.subheader("Investigation timeline")
         if result.get("demo_run_at"):
             st.caption(f"Investigation completed · {result['demo_run_at']}")
-        st.markdown("**System** · Deterministic analytics and evidence checks completed")
-        for index, step in enumerate(result.get("trace", []), start=1):
-            st.markdown(f"**STEP {index}** · {tool_labels.get(step.get('tool_name'), step.get('tool_name', 'Investigation step'))}")
-            with st.expander(f"Timeline details · step {index}"):
-                st.json({"arguments": step.get("arguments", {}), "result": step.get("result")})
-        st.markdown("**Control layer** · Hypothesis challenge and resolution recommendation completed")
-        for record in st.session_state.review_records:
-            st.markdown(f"**{record.timestamp.strftime('%H:%M:%S')}** · Human reviewer recorded **{_label(record.human_decision.value)}** · Review `{record.review_id}`")
-            st.write(record.reviewer_reason)
-            accepted = workbench.accepted_case(record.review_id)
-            if accepted:
-                st.caption(f"Validated memory write-back · {accepted.case_id} · explicitly human accepted")
+        if result.get("timeline"):
+            _render_investigation_timeline(result["timeline"])
+        else:
+            st.markdown("**System** · Deterministic analytics and evidence checks completed")
+            for index, step in enumerate(result.get("trace", []), start=1):
+                st.markdown(f"**STEP {index}** · {tool_labels.get(step.get('tool_name'), step.get('tool_name', 'Investigation step'))}")
+                with st.expander(f"Timeline details · step {index}"):
+                    st.json({"arguments": step.get("arguments", {}), "result": step.get("result")})
+            st.markdown("**Control layer** · Hypothesis challenge and resolution recommendation completed")
+            for record in st.session_state.review_records:
+                st.markdown(f"**{record.timestamp.strftime('%H:%M:%S')}** · Human reviewer recorded **{_label(record.human_decision.value)}** · Review `{record.review_id}`")
+                st.write(record.reviewer_reason)
+                accepted = workbench.accepted_case(record.review_id)
+                if accepted:
+                    st.caption(f"Validated memory write-back · {accepted.case_id} · explicitly human accepted")
         st.subheader("Historical memory search")
         query = st.text_input("Search prior cases", value="NAV variance price vendor discrepancy", key="memory_query")
         cases = workbench.search_memory(query)

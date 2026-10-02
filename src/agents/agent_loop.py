@@ -18,6 +18,7 @@ class AgentRun:
     evidence: list[EvidenceItem] = field(default_factory=list)
     raw_outputs: list[str] = field(default_factory=list)
     telemetry: AgentTelemetry = field(default_factory=AgentTelemetry)
+    timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 class InvestigationAgentLoop:
@@ -163,3 +164,4 @@ class InvestigationAgentLoop:
             raise ValueError(
                 "Agent did not return valid InvestigationReport JSON"
             ) from exc
+
