@@ -274,6 +274,7 @@ def _memory_context_from_evidence(
     default_check_order: list[str] | None = None,
     actual_check_order: list[str] | None = None,
     influencing_case_ids: list[str] | None = None,
+    relevant_checks: list[str] | None = None,
 ) -> dict[str, Any]:
     cases = []
     for item in evidence:
@@ -295,7 +296,7 @@ def _memory_context_from_evidence(
             case["case_id"] for case in cases
             if case.get("case_id") and any(
                 check in (case.get("investigation_path") or [])
-                for check in ("check_corporate_actions", "check_transaction_activity")
+                for check in (relevant_checks or [])
             )
         ],
         "default_check_order": default_check_order or [],
@@ -345,7 +346,11 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
     default_order = ["check_corporate_actions", "check_transaction_activity"]
     choices = list(default_order)
     influencing_case_ids: list[str] = []
-    available_checks = set(default_order)
+    available_checks = set()
+    if scenario.expected_transactions is not None:
+        available_checks.add("check_transaction_activity")
+    if scenario.corporate_actions is not None and not scenario.corporate_actions.empty:
+        available_checks.add("check_corporate_actions")
     for case in historical:
         path = case.get("investigation_path", [])
         suggested = list(dict.fromkeys(name for name in path if name in available_checks))
@@ -359,6 +364,7 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
         "default_check_order": default_order,
         "actual_check_order": list(choices),
         "influencing_case_ids": influencing_case_ids,
+        "relevant_checks": [name for name in default_order if name in available_checks],
         "memory_influence": (
             f"{influencing_case_ids[0]} prioritized "
             f"{'transaction reconciliation' if choices[0] == 'check_transaction_activity' else 'corporate-action checks'} "
@@ -467,6 +473,7 @@ class InvestigationWorkflow:
             default_check_order=memory_order.get("default_check_order"),
             actual_check_order=memory_order.get("actual_check_order"),
             influencing_case_ids=memory_order.get("influencing_case_ids"),
+            relevant_checks=memory_order.get("relevant_checks"),
         )
         memory_context["memory_influence"] = memory_order.get("memory_influence")
 
