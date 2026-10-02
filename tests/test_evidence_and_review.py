@@ -481,8 +481,9 @@ def test_accepted_review_writes_case_and_future_search_retrieves_it():
     assert case is not None
     assert case.human_validated is True
     assert case.review_metadata["review_id"] == record.review_id
-    retrieved = workbench.search_memory(case.root_cause, exception_type=case.exception_type)
+    retrieved = workbench.search_memory("transaction reconciliation", exception_type=case.exception_type)
     assert case.case_id in {item.case_id for item in retrieved}
+    assert next(item for item in retrieved if item.case_id == case.case_id).root_cause == case.root_cause
     next_investigation = workbench.investigate("Transaction Mismatch")
     assert case.case_id in {
         item["source_name"] for item in next_investigation["evidence"]
