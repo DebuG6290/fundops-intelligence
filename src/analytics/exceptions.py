@@ -31,8 +31,9 @@ def detect_nav_exception(
     calculated_prices: pd.DataFrame,
     shares_outstanding: float,
     threshold_bps: float = 10.0,
+    expected_holdings: pd.DataFrame | None = None,
 ) -> NavException | None:
-    expected_nav = calculate_nav(holdings, expected_prices, shares_outstanding)
+    expected_nav = calculate_nav(expected_holdings if expected_holdings is not None else holdings, expected_prices, shares_outstanding)
     calculated_nav = calculate_nav(holdings, calculated_prices, shares_outstanding)
     variance = calculate_nav_variance(expected_nav, calculated_nav)
 
@@ -60,3 +61,4 @@ def decompose_nav_exception(
         prices_expected=expected_prices,
         prices_calculated=calculated_prices,
     )
+
