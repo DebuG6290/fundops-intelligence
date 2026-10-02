@@ -21,6 +21,7 @@ from src.data.scenarios_extra import (
 )
 from src.memory.cases import CaseMemory, HistoricalCase
 from src.models.evidence import EvidenceItem
+from src.models.root_cause import evidence_targets_hypothesis
 from src.agents.evidence import _json_safe
 from src.review.models import HumanDecision, HumanReviewRecord, HumanReviewSubmission
 from src.review.service import HumanReviewService
@@ -151,15 +152,7 @@ def _bind_evidence_to_leading_hypothesis(state: InvestigationState) -> None:
             target = getattr(item, legacy_field)
             if not target:
                 continue
-            matches = target == root_cause
-            # NAV baseline uses the category-only PRICE_EXCEPTION hypothesis;
-            # specialist reports may instead identify the affected security.
-            if root_cause == "PRICE_EXCEPTION" and target.startswith("PRICE_EXCEPTION:"):
-                matches = True
-            elif root_cause.startswith("PRICE_EXCEPTION:") and target == "PRICE_EXCEPTION":
-                security_id = root_cause.split(":", 1)[1]
-                matches = item.metadata.get("security_id") == security_id
-            if matches:
+            if evidence_targets_hypothesis(target, root_cause, item.metadata):
                 updates[hypothesis_field] = leading["hypothesis_id"]
         bound.append(item.model_copy(update=updates))
     state.evidence[:] = bound
@@ -178,7 +171,7 @@ def _evidence_matches_target(
     return bool(
         not evidence_hypothesis_id
         and hypothesis.get("root_cause")
-        and getattr(item, legacy_field) == hypothesis["root_cause"]
+        and evidence_targets_hypothesis(getattr(item, legacy_field), hypothesis["root_cause"], item.metadata)
     )
 
 

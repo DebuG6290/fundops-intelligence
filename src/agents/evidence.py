@@ -5,6 +5,7 @@ import math
 from typing import Any
 
 from src.models.evidence import EvidenceItem, EvidenceSourceType
+from src.models.root_cause import RootCauseCode
 
 
 def _json_safe(value: Any) -> Any:
@@ -77,13 +78,13 @@ def evidence_from_tool_result(
             source_name = str(row.get("transaction_id", tool_name))
             quantity_difference = row.get("quantity_difference")
             if row.get("_merge") == "left_only":
-                supports = f"MISSING_TRANSACTION:{source_name}"
+                supports = f"{RootCauseCode.MISSING_TRANSACTION.value}:{source_name}"
             elif row.get("_merge") == "right_only":
-                supports = f"EXTRA_TRANSACTION:{source_name}"
+                supports = f"{RootCauseCode.EXTRA_TRANSACTION.value}:{source_name}"
             elif quantity_difference not in (None, 0, 0.0):
-                supports = f"TRANSACTION_QUANTITY_MISMATCH:{source_name}"
+                supports = f"{RootCauseCode.TRANSACTION_QUANTITY_MISMATCH.value}:{source_name}"
             elif row.get("type_mismatch"):
-                supports = f"TRANSACTION_TYPE_MISMATCH:{source_name}"
+                supports = f"{RootCauseCode.TRANSACTION_TYPE_MISMATCH.value}:{source_name}"
             claim = (
                 f"Transaction {source_name}: expected quantity "
                 f"{row.get('expected_quantity')}, actual quantity "
@@ -97,7 +98,7 @@ def evidence_from_tool_result(
             source_name = str(
                 row.get("corporate_action_id") or row.get("security_id") or tool_name
             )
-            supports = f"CORPORATE_ACTION:{row.get('security_id')}"
+            supports = f"{RootCauseCode.CORPORATE_ACTION.value}:{row.get('security_id')}"
             claim = (
                 f"Security {row.get('security_id')} has effective action "
                 f"{row.get('action_type')} with ratio {row.get('ratio')} "
@@ -115,7 +116,7 @@ def evidence_from_tool_result(
                     f"price {row.get('calculated_price')}; difference "
                     f"{row.get('difference_pct')}%."
                 )
-            price_hypothesis = "PRICE_EXCEPTION"
+            price_hypothesis = RootCauseCode.PRICE_EXCEPTION.value
             supports = price_hypothesis if row.get("found") and abs(float(row.get("difference_pct") or 0)) >= 10 else None
             contradicts = price_hypothesis if row.get("found") and supports is None else None
         elif tool_name == "identify_top_contributors":

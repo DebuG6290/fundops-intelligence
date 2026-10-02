@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from src.agents.state import InvestigationState
 from src.models.evidence import EvidenceItem, EvidenceSourceType
+from src.models.root_cause import evidence_targets_hypothesis, root_cause_code
 
 
 def _is_primary_evidence(item: EvidenceItem) -> bool:
@@ -59,29 +60,25 @@ class EvidenceChallengeAgent:
                 missing_evidence=("Primary current-case evidence",),
             )
 
-        price_check = next(
-            (
-                item["value"]
-                for item in state.observations
-                if item["name"] == "price_source_check"
-            ),
-            None,
-        )
+        price_checks = [item["value"] for item in state.observations
+                        if item["name"] == "price_source_check" and isinstance(item.get("value"), dict)]
 
         contradiction = False
         ambiguity = False
         leading_id = leading.get("hypothesis_id")
         supporting_ids = tuple(item.evidence_id for item in primary_evidence if (
             item.supports_hypothesis == leading_id
-            or (not item.supports_hypothesis and item.supports == leading["root_cause"])
+            or (not item.supports_hypothesis and evidence_targets_hypothesis(
+                item.supports, leading["root_cause"], item.metadata))
         ))
         contradictory_ids = tuple(item.evidence_id for item in primary_evidence if (
             item.contradicts_hypothesis == leading_id
-            or (not item.contradicts_hypothesis and item.contradicts == leading["root_cause"])
+            or (not item.contradicts_hypothesis and evidence_targets_hypothesis(
+                item.contradicts, leading["root_cause"], item.metadata))
         ))
         missing = list(dict.fromkeys(
             requirement for requirement in leading.get("required_evidence", [])
-            if not any(requirement.lower() in f"{item.source_name} {item.claim}".lower()
+            if not any(requirement.lower() in f"{item.source_type.value} {item.source_name} {item.claim}".lower()
                        for item in primary_evidence)
         ))
         insufficient = not supporting_ids or bool(missing)
@@ -105,16 +102,31 @@ class EvidenceChallengeAgent:
                     contradiction = True
         if any(
             item.contradicts_hypothesis == leading_id
-            or (not item.contradicts_hypothesis and item.contradicts == leading["root_cause"])
+            or (not item.contradicts_hypothesis and evidence_targets_hypothesis(
+                item.contradicts, leading["root_cause"], item.metadata))
             for item in state.evidence
         ):
             contradiction = True
 
-        if leading["root_cause"] == "PRICE_EXCEPTION":
-            if not price_check or not price_check.get("found"):
-                contradiction = True
-            elif abs(price_check.get("difference_pct", 0)) < 10:
-                contradiction = True
+        try:
+            pricing_hypothesis = root_cause_code(leading["root_cause"]) == "PRICE_EXCEPTION"
+        except ValueError:
+            pricing_hypothesis = False  # legacy specialist labels retain their existing challenge path
+        if pricing_hypothesis:
+            security_id = leading["root_cause"].partition(":")[2]
+            price_records = [item for item in primary_evidence
+                             if item.source_type == EvidenceSourceType.PRICE_SOURCE
+                             and (not security_id or item.metadata.get("security_id") == security_id)]
+            if price_records:
+                # Structured current-case records survive the specialist-to-
+                # workflow handoff; a transient tool observation need not.
+                if not any(item.evidence_id in supporting_ids for item in price_records):
+                    contradiction = True
+            else:
+                price_check = next((item for item in reversed(price_checks)
+                                    if not security_id or item.get("security_id") == security_id), None)
+                if not price_check or not price_check.get("found") or abs(price_check.get("difference_pct", 0)) < 10:
+                    contradiction = True
 
         if contradiction or ambiguity or insufficient:
             reasons = []
@@ -123,7 +135,8 @@ class EvidenceChallengeAgent:
             if ambiguity:
                 reasons.append("multiple plausible hypotheses")
             if insufficient:
-                reasons.append("no primary evidence supports the leading hypothesis")
+                reasons.append("required current-case evidence is missing" if supporting_ids
+                               else "no primary evidence supports the leading hypothesis")
             reason_text = " and ".join(reasons)
             return ChallengeResult(
                 challenged=True,

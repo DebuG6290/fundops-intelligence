@@ -83,6 +83,9 @@ def test_live_tool_path_changes_with_current_evidence_and_replans_on_contradicti
                for event in txn_result["timeline"])
     stages = [event["stage"] for event in price_result["timeline"]]
     assert stages.index("challenge_assessment") < stages.index("recommendation")
+    assert price_result["challenge"]["supporting_evidence_ids"]
+    assert price_result["status"] == "READY_FOR_HUMAN_REVIEW"
+    assert price_result["resolution"]["decision"] == "REVIEW_RECOMMENDATION"
     assert price_result["resolution"]["requires_human_approval"] is True
     assert price_result["telemetry"]["tool_calls"] == 2
     assert all("known_root_cause" not in json.dumps(context["initial_context"])
@@ -156,7 +159,7 @@ def test_bounded_loop_escalates_when_model_repeatedly_stops_without_evidence():
     assert provider.calls == 3
     assert run.report.confidence <= .35
     assert run.report.human_review_required is True
-    assert any(event["stage"] == "stopping_decision" and event["details"]["accepted"]
+    assert any(event["stage"] == "stopping_decision" and not event["details"]["accepted"]
                for event in run.timeline)
 
 
