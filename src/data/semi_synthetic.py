@@ -46,6 +46,47 @@ class SemiSyntheticSuite:
     evaluation_holding_keys: frozenset[str]
 
 
+def build_real_nport_suite(
+    snapshot: NPortSnapshot, *, memory_keys: frozenset[str],
+    evaluation_keys: frozenset[str], seed: int = 42, per_family: int = 100,
+) -> SemiSyntheticSuite:
+    """Build balanced cases from preselected, source-disjoint real holdings.
+
+    One source holding is used for one case. The SEC record is immutable;
+    operational comparisons and incident labels are synthetic.
+    """
+    if per_family < 1 or memory_keys & evaluation_keys:
+        raise ValueError("Need positive class size and disjoint source holdings")
+    eligible = snapshot.holdings.copy()
+    eligible["source_key"] = eligible.accession_number.astype(str) + ":" + eligible.holding_id.astype(str)
+    memory_pool = eligible.loc[eligible.source_key.isin(memory_keys)].sort_values("source_key").reset_index(drop=True)
+    evaluation_pool = eligible.loc[eligible.source_key.isin(evaluation_keys)].sort_values("source_key").reset_index(drop=True)
+    expected = per_family * len(CAUSES)
+    if len(memory_pool) != expected or len(evaluation_pool) != expected:
+        raise ValueError(f"Expected {expected} unique real holdings in each partition")
+    for pool in (memory_pool, evaluation_pool):
+        if pool.source_key.duplicated().any() or not (pool.reported_balance.gt(0) & pool.reported_value.gt(0)).all():
+            raise ValueError("Selected holdings must be unique with positive filed balance/value")
+    rng = np.random.default_rng(seed)
+    labels = [cause for cause in CAUSES for _ in range(per_family)]
+    memory_labels, evaluation_labels = labels.copy(), labels.copy()
+    rng.shuffle(memory_labels)
+    rng.shuffle(evaluation_labels)
+    memory_rows = _make_rows(memory_pool, memory_labels, rng, "MEM", without_replacement=True,
+                             source_sha256=snapshot.source_sha256, source_files=snapshot.source_files)
+    evaluation_rows = _make_rows(evaluation_pool, evaluation_labels, rng, "EVAL", without_replacement=True,
+                                 source_sha256=snapshot.source_sha256, source_files=snapshot.source_files)
+    memory_cases = tuple(_to_history(row) for row in memory_rows)
+    evidence = pd.DataFrame([item for row in evaluation_rows for item in row["evidence"]])
+    return SemiSyntheticSuite(
+        BenchmarkDataset({"exceptions": pd.DataFrame([row["observable"] for row in evaluation_rows]),
+                          "evidence_records": evidence,
+                          "operational_notes": pd.DataFrame(columns=["exception_id", "note"])},
+                         pd.DataFrame([row["truth"] for row in evaluation_rows])),
+        memory_cases, dict(snapshot.source_sha256), memory_keys, evaluation_keys,
+    )
+
+
 def build_semi_synthetic_suite(snapshot: NPortSnapshot, *, seed: int = 42, evaluation_count: int = 120) -> SemiSyntheticSuite:
     """Build a 100-case synthetic-label memory corpus and disjoint holdout.
 
@@ -87,10 +128,13 @@ def build_semi_synthetic_suite(snapshot: NPortSnapshot, *, seed: int = 42, evalu
     )
 
 
-def _make_rows(pool: pd.DataFrame, labels: list[str], rng: np.random.Generator, prefix: str) -> list[dict]:
+def _make_rows(pool: pd.DataFrame, labels: list[str], rng: np.random.Generator, prefix: str,
+               *, without_replacement: bool = False, source_sha256: dict[str, str] | None = None,
+               source_files: dict[str, str] | None = None) -> list[dict]:
     result = []
+    indices = rng.permutation(len(pool)) if without_replacement else None
     for index, cause in enumerate(labels):
-        source = pool.iloc[int(rng.integers(len(pool)))]
+        source = pool.iloc[int(indices[index])] if indices is not None else pool.iloc[int(rng.integers(len(pool)))]
         exception_id = f"SEMI_{prefix}_{index:04d}"
         # Filing amounts remain unchanged. These are explicitly injected
         # operational observations, with distractors and signal overlap.
@@ -113,6 +157,12 @@ def _make_rows(pool: pd.DataFrame, labels: list[str], rng: np.random.Generator, 
         evidence_id = f"SEMI_EV_{prefix}_{index:04d}"
         filing_evidence_id = f"SEMI_SEC_{prefix}_{index:04d}"
         source_key = str(source.source_key)
+        filed_balance = str(getattr(source, "filed_balance_raw", source.reported_balance))
+        filed_value = str(getattr(source, "filed_value_raw", source.reported_value))
+        comparison_balance = float(source.reported_balance) * (1 + float(signals[1]) / 100)
+        comparison_unit_value = float(source.implied_unit_value) * (1 + float(signals[0]) / 100)
+        if not np.isfinite(comparison_balance) or not np.isfinite(comparison_unit_value) or comparison_balance <= 0 or comparison_unit_value <= 0:
+            raise ValueError(f"Invalid perturbation for {source_key}")
         observable = {
             "exception_id": exception_id, "exception_type": EXCEPTION_TYPES[cause],
             "fund_id": str(source.accession_number), "security_id": str(source.holding_id),
@@ -132,27 +182,48 @@ def _make_rows(pool: pd.DataFrame, labels: list[str], rng: np.random.Generator, 
             "source_reported_balance": float(source.reported_balance),
             "source_reported_value": float(source.reported_value),
             "source_currency": str(source.currency),
-            "injected_comparison_balance": round(float(source.reported_balance) * (1 + float(signals[1]) / 100), 6),
-            "injected_comparison_unit_value": round(float(source.implied_unit_value) * (1 + float(signals[0]) / 100), 6),
+            "source_filed_balance_raw": filed_balance, "source_filed_value_raw": filed_value,
+            "source_series_id": str(getattr(source, "series_id", "")),
+            "source_report_date": str(getattr(source, "report_date", "")),
+            "source_issuer_cusip": str(getattr(source, "cusip", "")),
+            "source_issuer_name": str(getattr(source, "issuer_name", "")),
+            "source_asset_category": str(getattr(source, "asset_category", "")),
+            "source_holding_file": (source_files or {}).get("FUND_REPORTED_HOLDING", "FUND_REPORTED_HOLDING.tsv"),
+            "source_holding_sha256": (source_sha256 or {}).get("FUND_REPORTED_HOLDING", ""),
+            "injected_comparison_balance": comparison_balance,
+            "injected_comparison_unit_value": comparison_unit_value,
         }
-        evidence = [] if cause == "INSUFFICIENT_EVIDENCE" else [
+        evidence = [
             {"exception_id": exception_id, "evidence_id": filing_evidence_id,
              "source_type": "PUBLIC_FILING", "source_name": "SEC_N_PORT_FUND_REPORTED_HOLDING",
-             "claim": f"As filed for holding {source_key}: balance {source.reported_balance}, value {source.reported_value} {source.currency}.",
-             "reliability": None, "provenance": source_key},
+             "claim": f"As filed for holding {source_key}: balance {filed_balance}, value {filed_value} {source.currency}.",
+             "reliability": None, "provenance": source_key,
+             "source_file": observable["source_holding_file"], "source_sha256": observable["source_holding_sha256"]},
+        ]
+        if cause != "INSUFFICIENT_EVIDENCE":
+            evidence.append(
             {"exception_id": exception_id, "evidence_id": evidence_id,
              "source_type": "SYNTHETIC_RECONCILIATION", "source_name": "controlled_exception_injector",
              "claim": f"Controlled comparison for holding {source_key}: balance {observable['injected_comparison_balance']}, implied unit value {observable['injected_comparison_unit_value']}; injected price variance {observable['price_variance_pct']}%, quantity variance {observable['quantity_variance_pct']}%, FX deviation {observable['fx_deviation_pct']}%.",
-             "reliability": None, "provenance": source_key},
-        ]
+             "reliability": None, "provenance": source_key,
+             "source_file": None, "source_sha256": None})
         truth = {
             "exception_id": exception_id, "root_cause": cause, "injection_mechanism": cause,
-            "secondary_causes": [], "relevant_evidence_ids": [evidence_id] if evidence else [],
+            "secondary_causes": [], "relevant_evidence_ids": [evidence_id] if cause != "INSUFFICIENT_EVIDENCE" else [],
             "expected_escalation": cause in {"INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE"},
             "expected_contradiction": cause == "CONFLICTING_EVIDENCE",
             "expected_recommendation_category": "INVESTIGATE_FURTHER" if cause in {"INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE"} else "REVIEW_RECOMMENDATION",
             "expected_investigation_category": EXCEPTION_TYPES[cause], "difficulty": difficulty,
             "source_key": source_key,
+            "source_accession": str(source.accession_number), "source_holding_id": str(source.holding_id),
+            "source_series_id": observable["source_series_id"], "source_report_date": observable["source_report_date"],
+            "source_filed_balance_raw": filed_balance, "source_filed_value_raw": filed_value,
+            "source_holding_file": observable["source_holding_file"],
+            "source_holding_sha256": observable["source_holding_sha256"],
+            "synthetic_fields": ["injected_comparison_balance", "injected_comparison_unit_value",
+                                 "price_variance_pct", "quantity_variance_pct", "fx_deviation_pct",
+                                 "corporate_action_flag", "source_conflict_count"],
+            "perturbation_applied": cause,
         }
         result.append({"observable": observable, "evidence": evidence, "truth": truth})
     return result
@@ -190,4 +261,3 @@ def _symptoms(row: dict) -> list[str]:
 
 def observable_symptom_query(row: dict) -> str:
     return " ".join(_symptoms(row))
-

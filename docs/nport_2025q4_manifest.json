@@ -1,0 +1,267 @@
+{
+  "case_counts": {
+    "held_out_evaluation_cases": 700,
+    "historical_synthetic_label_cases": 700,
+    "per_class_per_partition": 100
+  },
+  "class_distribution": {
+    "CONFLICTING_EVIDENCE": 100,
+    "CORPORATE_ACTION": 100,
+    "FX_MISMATCH": 100,
+    "INSUFFICIENT_EVIDENCE": 100,
+    "STALE_PRICE": 100,
+    "WRONG_QUANTITY": 100,
+    "WRONG_SECURITY_MAPPING": 100
+  },
+  "construction": "Unchanged SEC holding context plus controlled synthetic operational comparison; incident labels are synthetic, not SEC observations",
+  "dataset": "SEC N-PORT 2025Q4 real-public-base semi-synthetic benchmark",
+  "filter": "ASSET_CAT=EC; UNIT=NS; nonmissing issuer name/CUSIP/currency/series; finite positive filed balance and value",
+  "limitations": [
+    "N-PORT filings are as-filed public holdings, not verified prices or internal operations incidents.",
+    "All root-cause labels, transaction/CA indicators, and operational comparisons are synthetic.",
+    "Issuer CUSIP and series/period disjointness reduce but do not eliminate economic or manager-level dependence.",
+    "The 100 cases per held-out class allow descriptive comparisons; uncertainty remains material.",
+    "No model, memory experiment, or Sarvam evaluation was run when creating this benchmark."
+  ],
+  "provenance": "Each generated case carries accession, holding ID, raw filed balance/value, currency, series, report date, source filename/hash, synthetic comparison fields, evidence IDs; labels and perturbation are evaluator-only",
+  "reproduce": "python -m evaluation.build_nport_benchmark --nport-dir <extracted 2025Q4 SEC N-PORT directory> --quarter 2025q4 --seed 42 --per-family 100 --output-dir <local output directory>",
+  "seed": 42,
+  "source_profile": {
+    "field_origin": {
+      "public": [
+        "ACCESSION_NUMBER",
+        "HOLDING_ID",
+        "ISSUER_NAME",
+        "ISSUER_CUSIP",
+        "BALANCE",
+        "UNIT",
+        "CURRENCY_CODE",
+        "CURRENCY_VALUE",
+        "ASSET_CAT",
+        "SERIES_ID",
+        "SERIES_NAME",
+        "REPORT_DATE"
+      ],
+      "synthetic": [
+        "operational comparison balances and values",
+        "exception signals",
+        "injected incident labels",
+        "difficulty",
+        "ground truth"
+      ]
+    },
+    "files": {
+      "FUND_REPORTED_HOLDING": {
+        "bytes": 859586075,
+        "filename": "FUND_REPORTED_HOLDING.tsv",
+        "sha256": "67cf1b735c657621a5a9ed7cc801a716d22164a82caf2c18a8a42d4ad9b91ef6"
+      },
+      "FUND_REPORTED_INFO": {
+        "bytes": 4262296,
+        "filename": "FUND_REPORTED_INFO.tsv",
+        "sha256": "3e44a2e58cf606c04e1646a7c76ed6c0148a32a501cd2794dedaecd592f26fa0"
+      },
+      "SUBMISSION": {
+        "bytes": 906513,
+        "filename": "SUBMISSION.tsv",
+        "sha256": "07ba04f7f143f9630f891de667d549462672d0fc359c5a7258f044492855f727"
+      }
+    },
+    "filings": {
+      "duplicate_accessions": 0,
+      "duplicate_submission_accessions": 0,
+      "fund_info_rows": 13328,
+      "holdings_without_info": 0,
+      "info_without_submission": 0,
+      "unique_accessions": 13328
+    },
+    "funds": {
+      "missing_series_ids": 703,
+      "unique_series_ids": 12556,
+      "unique_series_names": 13057
+    },
+    "holdings": {
+      "asset_categories": {
+        "<missing>": 8,
+        "ABS-APCP": 1139,
+        "ABS-CBDO": 68392,
+        "ABS-MBS": 449150,
+        "ABS-O": 69833,
+        "COMM": 45,
+        "DBT": 1512785,
+        "DCO": 12484,
+        "DCR": 10067,
+        "DE": 61687,
+        "DFE": 113072,
+        "DIR": 48513,
+        "DO": 1499,
+        "EC": 1797005,
+        "EP": 18949,
+        "LON": 881010,
+        "OTHER": 23048,
+        "RA": 8698,
+        "RE": 1669,
+        "SN": 2297,
+        "STIV": 24156
+      },
+      "currencies": {
+        "<missing>": 29801,
+        "AED": 3475,
+        "ALL": 78,
+        "AMD": 35,
+        "AOA": 1,
+        "ARS": 177,
+        "AUD": 34863,
+        "AZN": 26,
+        "BAM": 4,
+        "BDT": 52,
+        "BGN": 11,
+        "BHD": 7,
+        "BRL": 17583,
+        "BWP": 7,
+        "CAD": 37195,
+        "CHF": 20934,
+        "CLP": 3616,
+        "CNY": 59966,
+        "COP": 2124,
+        "CRC": 3,
+        "CZK": 1852,
+        "DKK": 8167,
+        "DOP": 309,
+        "EGP": 1101,
+        "EUR": 179721,
+        "GBP": 60900,
+        "GEL": 5,
+        "GHS": 184,
+        "HKD": 49224,
+        "HUF": 1941,
+        "IDR": 10378,
+        "ILS": 8511,
+        "INR": 49227,
+        "ISK": 219,
+        "JMD": 14,
+        "JOD": 14,
+        "JPY": 134930,
+        "KES": 42,
+        "KGS": 8,
+        "KRW": 36101,
+        "KWD": 1958,
+        "KYD": 3,
+        "KZT": 560,
+        "LKR": 134,
+        "MAD": 53,
+        "MNT": 18,
+        "MUR": 25,
+        "MXN": 8678,
+        "MYR": 8514,
+        "MZN": 8,
+        "NAD": 2,
+        "NGN": 554,
+        "NOK": 9413,
+        "NZD": 4674,
+        "OMR": 49,
+        "PEN": 2137,
+        "PHP": 3538,
+        "PKR": 113,
+        "PLN": 6326,
+        "PYG": 56,
+        "QAR": 1700,
+        "RON": 809,
+        "RSD": 43,
+        "RUB": 2000,
+        "SAR": 7189,
+        "SEK": 21094,
+        "SGD": 10029,
+        "THB": 9826,
+        "TND": 19,
+        "TRY": 8349,
+        "TWD": 39222,
+        "TZS": 11,
+        "UAH": 11,
+        "UGX": 168,
+        "USD": 4193912,
+        "UYU": 269,
+        "UZS": 173,
+        "VND": 609,
+        "XOF": 8,
+        "ZAR": 10367,
+        "ZMW": 75,
+        "ZWD": 4
+      },
+      "distinct_accessions": 13325,
+      "duplicate_accession_holding_keys": 0,
+      "missing_fields": {
+        "ACCESSION_NUMBER": 0,
+        "ASSET_CAT": 8,
+        "BALANCE": 3247,
+        "CURRENCY_CODE": 29801,
+        "CURRENCY_VALUE": 1818,
+        "HOLDING_ID": 0,
+        "ISSUER_CUSIP": 1255082,
+        "ISSUER_NAME": 123293,
+        "UNIT": 8
+      },
+      "reported_balance": {
+        "count": 5102259,
+        "max": 40321771424069.5,
+        "median": 65000.0,
+        "min": -73257177332.0,
+        "p25": 3789.875,
+        "p75": 750000.0,
+        "p95": 8500000.0
+      },
+      "reported_value": {
+        "count": 5103688,
+        "max": 135578483687.82,
+        "median": 300680.06,
+        "min": -9273429000.0,
+        "p25": 18209.395,
+        "p75": 1872642.8275,
+        "p95": 17903000.9205
+      },
+      "total": 5105506,
+      "units": {
+        "<missing>": 8,
+        "NC": 204317,
+        "NS": 1852929,
+        "OU": 35650,
+        "PA": 3012602
+      },
+      "usable_nonzero_balance_positive_value": 4929373
+    },
+    "periods": {
+      "29-AUG-2025": 191,
+      "30-APR-2025": 1,
+      "30-JUN-2025": 15,
+      "30-NOV-2025": 2,
+      "30-SEP-2025": 6639,
+      "31-AUG-2025": 2415,
+      "31-DEC-2024": 3,
+      "31-JUL-2025": 30,
+      "31-MAR-2025": 4,
+      "31-MAY-2025": 2,
+      "31-OCT-2025": 4026
+    },
+    "quarter": "2025q4",
+    "source": "SEC Form N-PORT quarterly bulk data (as-filed)",
+    "source_url": "https://www.sec.gov/files/dera/data/form-n-port-data-sets/2025q4_nport.zip"
+  },
+  "split": {
+    "available_eligible_series_by_period": {
+      "30-SEP-2025": 4810,
+      "31-OCT-2025": 2665
+    },
+    "evaluation_report_date": "31-OCT-2025",
+    "memory_report_date": "30-SEP-2025",
+    "one_holding_per_series": true,
+    "overlap_counts": {
+      "filing_period": 0,
+      "fund_series": 0,
+      "holding": 0,
+      "issuer_cusip": 0,
+      "issuer_name": 0
+    },
+    "same_issuer_identifier_or_name_across_partitions": false
+  }
+}
+
