@@ -24,9 +24,9 @@ class FinalDemoWorkbench:
         item = self.scenarios.get(scenario_id)
         if item is None:
             raise ValueError(f"Unsupported final demo scenario: {scenario_id}")
-        accepted = list(self.workflow.accepted_cases_by_review_id.values())
-        prior_path = list(accepted[-1].investigation_path) if accepted else None
-        result = self.workflow.run_nav(item.scenario, provider=provider, prior_investigation_path=prior_path)
+        # Retrieve relevant validated analogies inside the workflow for this case.
+        # Do not use whichever case happened to be accepted most recently.
+        result = self.workflow.run_nav(item.scenario, provider=provider)
         result.update({"scenario_id": item.scenario_id, "scenario_title": item.title,
                        "scenario_description": item.description})
         # expected_root_cause and difficulty deliberately stay evaluation-only.
