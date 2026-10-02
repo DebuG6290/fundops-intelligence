@@ -6,7 +6,7 @@ import pytest
 from src.data.demo_scenarios import create_final_demo_scenarios, get_final_demo_scenario
 from src.demo.final_workbench import FinalDemoWorkbench
 from src.agents.nav_agent import build_nav_tool_registry
-from src.memory.cases import CaseMemory, seed_historical_cases
+from src.memory.cases import CaseMemory, HistoricalCase, seed_historical_cases
 from src.review.models import HumanDecision
 
 
@@ -66,9 +66,9 @@ def test_accept_stores_path_evidence_and_becomes_retrievable():
     assert "price-source comparison" in case.useful_evidence
     assert case in workbench.search_memory("nav discrepancy price vendor corporate", "NAV_DISCREPANCY")
     follow_up = workbench.investigate("NAV_TRANSACTION")
-    assert any(item["metadata"].get("case_id") == case.case_id for item in follow_up["evidence"]
+    assert all(item["metadata"].get("case_id") != case.case_id for item in follow_up["evidence"]
                if item["source_type"] == "HISTORICAL_CASE")
-    assert follow_up["memory_context"]["prior_investigation_paths"]
+    assert follow_up["memory_context"]["influencing_case_ids"] == []
     # The next case is determined by its own current transaction evidence.
     assert follow_up["probable_root_cause"].startswith("MISSING_TRANSACTION:")
 
@@ -93,14 +93,20 @@ def test_human_review_does_not_mutate_synthetic_financial_data():
         assert current.equals(original)
 
 
-def test_memory_path_prioritizes_alternate_check_on_follow_up():
-    workbench = FinalDemoWorkbench()
-    first = workbench.investigate("NAV_PRICE")
-    review = workbench.submit_review(first, HumanDecision.ACCEPT, "Validated current evidence.")
-    assert workbench.accepted_case(review.review_id)
+def test_relevant_validated_memory_path_prioritizes_alternate_check():
+    prior_case = HistoricalCase(
+        case_id="CASE_005", exception_type="NAV_DISCREPANCY",
+        title="Prior transaction investigation", symptoms=("transaction position break",),
+        root_cause="MISSING_TRANSACTION", resolution="Review the transaction record.",
+        human_validated=True,
+        investigation_path=("check_transaction_activity", "check_corporate_actions"),
+        useful_evidence=("transaction reconciliation",),
+    )
+    workbench = FinalDemoWorkbench(CaseMemory([*seed_historical_cases(), prior_case]))
     second = workbench.investigate("NAV_TRANSACTION")
     names = [step["tool_name"] for step in second["trace"]]
     assert names.index("check_transaction_activity") < names.index("check_corporate_actions")
+    assert second["memory_context"]["influencing_case_ids"] == ["CASE_005"]
 
 
 def test_nav_agent_registry_exposes_current_domain_investigation_tools():
