@@ -6,7 +6,7 @@ Agentic AI for Fund Operations Exception Investigation.
 A pro-code decision-support platform that investigates fund-operation exceptions by combining deterministic financial analytics, specialized AI agents, historical case memory, evidence verification, and human review.
 
 ## Design principle
-**Machines calculate. Agents investigate. Evidence constrains. Humans decide. The system remembers.**
+**Machines calculate. Memory guides. Agents investigate. Evidence constrains. Humans decide. The system remembers.**
 
 ## Initial MVP
 - Synthetic fund-operations environment
@@ -34,6 +34,12 @@ evidence escalation path. Optional Live Sarvam mode uses the stable Sarvam
 Chat Completion V1 SDK adapter. Configure `SARVAM_API_KEY`; the default model
 is `sarvam-105b`. Human review and case memory are process-local and reset
 when Streamlit restarts. See [the demo flow](docs/demo_flow.md).
+
+The interactive demo now demonstrates operational memory, agentic investigation,
+deterministic tools, evidence challenge, mandatory human review, validated
+memory write-back, and a follow-up investigation whose path can be guided by
+the accepted case. Its synthetic cases are separate from the research benchmark;
+they do not imply real-world performance.
 
 ## Configure optional Live Sarvam mode
 
@@ -142,3 +148,4 @@ stable IDs, but evidence assessments are model-reported links checked against
 observed evidence IDs, not independently verified semantic entailments.
 Reviews and memory are process-local; only explicit human ACCEPT promotes a
 case to analogy memory. This README does not claim model superiority.
+
