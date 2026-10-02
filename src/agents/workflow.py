@@ -324,18 +324,17 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
     evidence.extend(evidence_from_tool_result("get_fund_snapshot", snapshot, scenario.exception_id))
     record("get_fund_snapshot", {}, snapshot)
     # Search using observable symptoms/context, never the hidden answer key.
-    query_terms = ["NAV variance"]
-    if scenario.expected_prices is not None and scenario.calculated_prices is not None:
-        query_terms.append("price vendor")
+    query_terms = []
     if scenario.expected_transactions is not None:
         query_terms.append("transaction position records")
     if scenario.corporate_actions is not None and not scenario.corporate_actions.empty:
         query_terms.append("corporate action event records")
+    if not query_terms:
+        query_terms.extend(["NAV variance", "price vendor"])
     query = " ".join(query_terms)
-    candidates = search_historical_cases_tool(
+    historical = search_historical_cases_tool(
         memory, query, "NAV_DISCREPANCY", 5
     )
-    historical = [case for case in candidates if case.get("human_validated") is True]
     record(
         "search_historical_cases",
         {"query": query, "exception_type": "NAV_DISCREPANCY", "human_validated_only": True},
