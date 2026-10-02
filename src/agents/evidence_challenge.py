@@ -21,6 +21,9 @@ class ChallengeResult:
     final_confidence: float
     recommendation: str
     insufficient_evidence: bool = False
+    supporting_evidence_ids: tuple[str, ...] = ()
+    contradictory_evidence_ids: tuple[str, ...] = ()
+    missing_evidence: tuple[str, ...] = ()
 
 
 class EvidenceChallengeAgent:
@@ -40,6 +43,7 @@ class EvidenceChallengeAgent:
                 final_confidence=0.0,
                 recommendation="Escalate: no hypothesis available.",
                 insufficient_evidence=True,
+                missing_evidence=("A testable current-case hypothesis",),
             )
 
         leading = state.hypotheses[0]
@@ -52,6 +56,7 @@ class EvidenceChallengeAgent:
                 final_confidence=min(float(leading["confidence"]), 0.35),
                 recommendation="Escalate: no primary evidence is available.",
                 insufficient_evidence=True,
+                missing_evidence=("Primary current-case evidence",),
             )
 
         price_check = next(
@@ -66,11 +71,22 @@ class EvidenceChallengeAgent:
         contradiction = False
         ambiguity = False
         leading_id = leading.get("hypothesis_id")
-        insufficient = not any(
+        supporting_ids = tuple(item.evidence_id for item in primary_evidence if (
             item.supports_hypothesis == leading_id
             or (not item.supports_hypothesis and item.supports == leading["root_cause"])
-            for item in primary_evidence
-        )
+        ))
+        contradictory_ids = tuple(item.evidence_id for item in primary_evidence if (
+            item.contradicts_hypothesis == leading_id
+            or (not item.contradicts_hypothesis and item.contradicts == leading["root_cause"])
+        ))
+        missing = list(dict.fromkeys(
+            requirement for requirement in leading.get("required_evidence", [])
+            if not any(requirement.lower() in f"{item.source_name} {item.claim}".lower()
+                       for item in primary_evidence)
+        ))
+        insufficient = not supporting_ids or bool(missing)
+        if not supporting_ids:
+            missing.append("Primary evidence supporting the leading hypothesis")
 
         # Escalate when multiple plausible hypotheses are too close to call.
         if len(state.hypotheses) >= 2:
@@ -118,6 +134,9 @@ class EvidenceChallengeAgent:
                     f"Escalate: {reason_text} prevents a reliable conclusion."
                 ),
                 insufficient_evidence=insufficient,
+                supporting_evidence_ids=supporting_ids,
+                contradictory_evidence_ids=contradictory_ids,
+                missing_evidence=tuple(missing),
             )
 
         return ChallengeResult(
@@ -126,6 +145,9 @@ class EvidenceChallengeAgent:
             ambiguity_found=False,
             final_confidence=leading["confidence"],
             recommendation=state.recommended_action or "Proceed to human review.",
+            supporting_evidence_ids=supporting_ids,
+            contradictory_evidence_ids=contradictory_ids,
+            missing_evidence=tuple(missing),
         )
 
 
@@ -148,3 +170,4 @@ def apply_challenge(
         state.status = "READY_FOR_HUMAN_REVIEW"
 
     return state
+

@@ -10,6 +10,7 @@ from src.agents.resolution import ResolutionAgent
 from src.agents.router import InvestigationRouter
 from src.agents.rule_based_investigator import RuleBasedInvestigator
 from src.agents.nav_agent import NavInvestigationAgent
+from src.agents.stateful_investigation import timeline_event
 from src.agents.schemas import InvestigationReport, ToolTrace
 from src.agents.state import InvestigationState
 from src.agents.transaction_agent import TransactionInvestigationAgent
@@ -281,6 +282,7 @@ def _memory_context_from_evidence(
         if item.source_type.value != "HISTORICAL_CASE":
             continue
         meta = item.metadata
+        # Historical records guide investigation only after human validation.
         if meta.get("human_validated") is not True:
             continue
         cases.append({key: meta[key] for key in (
@@ -323,25 +325,25 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
     snapshot = get_fund_snapshot_tool(scenario)
     evidence.extend(evidence_from_tool_result("get_fund_snapshot", snapshot, scenario.exception_id))
     record("get_fund_snapshot", {}, snapshot)
-    # Search using observable symptoms/context, never the hidden answer key.
+    # Search using currently observable source/context availability, never an
+    # answer-key or a root-cause value. Presence describes context, not cause.
     query_terms = []
     if scenario.expected_transactions is not None:
-        query_terms.append("transaction position records")
+        query_terms.extend(["transaction position records"])
     if scenario.corporate_actions is not None and not scenario.corporate_actions.empty:
-        query_terms.append("corporate action event records")
+        query_terms.extend(["corporate action event records"])
     if not query_terms:
         query_terms.extend(["NAV variance", "price vendor"])
-    query = " ".join(query_terms)
+    query = " ".join(term for term in query_terms if term)
     historical = search_historical_cases_tool(
         memory, query, "NAV_DISCREPANCY", 5
     )
-    record(
-        "search_historical_cases",
-        {"query": query, "exception_type": "NAV_DISCREPANCY", "human_validated_only": True},
-        historical,
-    )
+    search_args = {"query": query, "exception_type": "NAV_DISCREPANCY", "human_validated_only": True}
+    record("search_historical_cases", search_args, historical)
     evidence.extend(evidence_from_tool_result("search_historical_cases", historical, scenario.exception_id))
 
+    # A validated analogy may prioritize an available check only when its own
+    # recorded path implies a different order. It never selects the root cause.
     default_order = ["check_corporate_actions", "check_transaction_activity"]
     choices = list(default_order)
     influencing_case_ids: list[str] = []
@@ -371,7 +373,6 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
             if influencing_case_ids else None
         ),
     }
-
     contributors = record("identify_top_contributors", {"top_n": 3}, identify_top_contributors_tool(scenario, 3))
     evidence.extend(evidence_from_tool_result("identify_top_contributors", contributors, scenario.exception_id))
     security_id = contributors[0]["security_id"] if contributors else None
@@ -414,8 +415,6 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
 
     report = InvestigationReport(probable_root_cause=root, confidence=confidence, observations=[rationale], supporting_evidence=[], counter_evidence=[], recommended_next_step="Review the cited records and obtain any missing primary evidence before taking operational action.", human_review_required=True)
     return AgentRun(report=report, trace=[ToolTrace(**item) for item in calls], evidence=evidence), memory_order
-
-
 class InvestigationWorkflow:
     """
     Orchestration layer.
@@ -453,7 +452,7 @@ class InvestigationWorkflow:
                 elif step.tool_name == "compare_price_sources":
                     state.add_observation("price_source_check", step.result, step.tool_name)
         else:
-            run = NavInvestigationAgent(self.memory, provider=provider).investigate(scenario)
+            run = NavInvestigationAgent(self.memory, provider=provider).investigate_statefully(scenario)
             if run.report is None:
                 raise RuntimeError("NAV specialist did not return a valid investigation report")
             state = _state_from_specialist_report(scenario, run.report, run.evidence)
@@ -494,7 +493,21 @@ class InvestigationWorkflow:
                 "trace": [item.model_dump() for item in run.trace],
                 "telemetry": run.telemetry.as_dict(),
                 "report_evidence_is_narrative": True,
+                "timeline": list(run.timeline),
             })
+            result["timeline"].append(timeline_event(
+                "challenge_assessment", result["challenge"]["recommendation"],
+                supporting_evidence_ids=result["challenge"].get("supporting_evidence_ids", []),
+                contradictory_evidence_ids=result["challenge"].get("contradictory_evidence_ids", []),
+                missing_evidence=result["challenge"].get("missing_evidence", []),
+                escalation_required=result["status"] == "ESCALATE",
+                final=True,
+            ))
+            result["timeline"].append(timeline_event(
+                "recommendation", result["resolution"]["rationale"],
+                decision=result["resolution"]["decision"],
+                human_review_required=True,
+            ))
         return result
 
     def run_transaction(
@@ -602,6 +615,11 @@ class InvestigationWorkflow:
             human_review_required=True,
         )
         record = self.review_service.submit_review(submission, evidence)
+        investigation_result.setdefault("timeline", []).append(timeline_event(
+            "human_decision", "The reviewer recorded an explicit decision and reason.",
+            review_id=record.review_id, decision=record.human_decision.value,
+            reviewer_reason=record.reviewer_reason,
+        ))
         if (
             record.human_decision is HumanDecision.ACCEPT
             and root_cause
@@ -667,5 +685,9 @@ class InvestigationWorkflow:
             )
             self.memory.add(case)
             self.accepted_cases_by_review_id[record.review_id] = case
+            investigation_result["timeline"].append(timeline_event(
+                "memory_write_back", "Only this human-accepted case entered validated operational memory.",
+                review_id=record.review_id, case_id=case.case_id,
+            ))
         return record
 

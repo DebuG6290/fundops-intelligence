@@ -106,15 +106,18 @@ def evidence_from_tool_result(
         elif tool_name == "compare_price_sources":
             source_type = EvidenceSourceType.PRICE_SOURCE
             source_name = str(row.get("security_id", tool_name))
-            claim = (
-                f"Security {source_name}: {row.get('expected_source')} price "
-                f"{row.get('expected_price')} versus {row.get('calculated_source')} "
-                f"price {row.get('calculated_price')}; difference "
-                f"{row.get('difference_pct')}%."
-            )
+            if not row.get("found"):
+                claim = f"Price-source comparison for {source_name} is unavailable in current records."
+            else:
+                claim = (
+                    f"Security {source_name}: {row.get('expected_source')} price "
+                    f"{row.get('expected_price')} versus {row.get('calculated_source')} "
+                    f"price {row.get('calculated_price')}; difference "
+                    f"{row.get('difference_pct')}%."
+                )
             price_hypothesis = "PRICE_EXCEPTION"
-            supports = price_hypothesis if abs(row.get("difference_pct", 0)) >= 10 else None
-            contradicts = price_hypothesis if supports is None else None
+            supports = price_hypothesis if row.get("found") and abs(float(row.get("difference_pct") or 0)) >= 10 else None
+            contradicts = price_hypothesis if row.get("found") and supports is None else None
         elif tool_name == "identify_top_contributors":
             source_type = EvidenceSourceType.DETERMINISTIC_ANALYTICS
             source_name = tool_name
