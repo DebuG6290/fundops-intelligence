@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Any
 from datetime import datetime
 
+# ---------------------------------------------------------
+# Project root setup
+# ---------------------------------------------------------
+# streamlit_app.py lives inside /app.
+# Add the repository root so imports such as
+# `evaluation.*` and `src.*` work reliably.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
 import pandas as pd
 import streamlit as st
+
+from dotenv import load_dotenv
+
+# Load .env from the repository root
+load_dotenv(PROJECT_ROOT / ".env")
+
 
 from evaluation.benchmark import evaluate_rules_and_ml
 from src.data.benchmark import generate_benchmark_dataset
 from src.demo.workbench import DemoWorkbench
 from src.llm.sarvam_provider import SarvamProvider
 from src.review.models import HumanDecision
-
 
 def _format_metric(value: Any) -> str:
     if value is None:
