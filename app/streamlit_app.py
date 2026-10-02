@@ -177,7 +177,7 @@ if result:
         st.subheader("Operational Memory")
         memory_context = workbench.get_memory_preview(result)
         retrieved_cases = [case for case in memory_context.get("retrieved_cases", []) if case.get("human_validated") is True]
-        st.write(f"Relevant human-validated historical analogies retrieved: {len(retrieved_cases)}")
+        st.write(f"Human-validated historical analogies retrieved: {len(retrieved_cases)}")
         for case in retrieved_cases:
             with st.expander(f"{case.get('case_id', 'Case')} · {case.get('title', 'Historical case')}"):
                 st.write("Human-validated historical analogy · not proof of the current root cause")
