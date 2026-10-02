@@ -268,12 +268,20 @@ def _deterministic_corporate_action_run(scenario: CorporateActionScenario, memor
     )
 
 
-def _memory_context_from_evidence(evidence: list[EvidenceItem]) -> dict[str, Any]:
+def _memory_context_from_evidence(
+    evidence: list[EvidenceItem],
+    *,
+    default_check_order: list[str] | None = None,
+    actual_check_order: list[str] | None = None,
+    influencing_case_ids: list[str] | None = None,
+) -> dict[str, Any]:
     cases = []
     for item in evidence:
         if item.source_type.value != "HISTORICAL_CASE":
             continue
         meta = item.metadata
+        if meta.get("human_validated") is not True:
+            continue
         cases.append({key: meta[key] for key in (
             "case_id", "title", "historical_root_cause", "human_validated",
             "investigation_path", "useful_evidence",
@@ -283,11 +291,21 @@ def _memory_context_from_evidence(evidence: list[EvidenceItem]) -> dict[str, Any
         "retrieved_case_count": len(cases),
         "prior_investigation_paths": [case["investigation_path"] for case in cases if case.get("investigation_path")],
         "memory_influence": None,
+        "relevant_case_ids": [
+            case["case_id"] for case in cases
+            if case.get("case_id") and any(
+                check in (case.get("investigation_path") or [])
+                for check in ("check_corporate_actions", "check_transaction_activity")
+            )
+        ],
+        "default_check_order": default_check_order or [],
+        "actual_check_order": actual_check_order or [],
+        "influencing_case_ids": influencing_case_ids or [],
     }
 
 
-def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: CaseMemory, prior_path: list[str] | None = None):
-    """Run an offline, evidence-backed investigation; prior paths only order available checks."""
+def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: CaseMemory):
+    """Run an offline investigation; validated, relevant analogies may reorder checks."""
     from src.agents.agent_loop import AgentRun
     from src.agents.evidence import evidence_from_tool_result
     from src.agents.schemas import InvestigationReport
@@ -304,23 +322,57 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
     snapshot = get_fund_snapshot_tool(scenario)
     evidence.extend(evidence_from_tool_result("get_fund_snapshot", snapshot, scenario.exception_id))
     record("get_fund_snapshot", {}, snapshot)
-    historical = record("search_historical_cases", {"query": "NAV variance price transaction corporate action", "exception_type": "NAV_DISCREPANCY"}, search_historical_cases_tool(memory, "NAV variance price transaction corporate action", "NAV_DISCREPANCY", 5))
+    # Search using observable symptoms/context, never the hidden answer key.
+    query_terms = ["NAV variance"]
+    if scenario.expected_prices is not None and scenario.calculated_prices is not None:
+        query_terms.append("price vendor discrepancy")
+    if scenario.expected_transactions is not None:
+        query_terms.append("transaction position mismatch")
+    if scenario.corporate_actions is not None and not scenario.corporate_actions.empty:
+        query_terms.append("corporate action event records")
+    query = " ".join(query_terms)
+    candidates = search_historical_cases_tool(
+        memory, query, "NAV_DISCREPANCY", 5
+    )
+    historical = [case for case in candidates if case.get("human_validated") is True]
+    record(
+        "search_historical_cases",
+        {"query": query, "exception_type": "NAV_DISCREPANCY", "human_validated_only": True},
+        historical,
+    )
     evidence.extend(evidence_from_tool_result("search_historical_cases", historical, scenario.exception_id))
+
+    default_order = ["check_corporate_actions", "check_transaction_activity"]
+    choices = list(default_order)
+    influencing_case_ids: list[str] = []
+    available_checks = set(default_order)
+    for case in historical:
+        path = case.get("investigation_path", [])
+        suggested = list(dict.fromkeys(name for name in path if name in available_checks))
+        if suggested:
+            proposed_order = suggested + [name for name in default_order if name not in suggested]
+            if proposed_order != default_order:
+                choices = proposed_order
+                influencing_case_ids = [str(case["case_id"])]
+                break
+    memory_order = {
+        "default_check_order": default_order,
+        "actual_check_order": list(choices),
+        "influencing_case_ids": influencing_case_ids,
+        "memory_influence": (
+            f"{influencing_case_ids[0]} prioritized "
+            f"{'transaction reconciliation' if choices[0] == 'check_transaction_activity' else 'corporate-action checks'} "
+            f"before {'transaction reconciliation' if choices[1] == 'check_transaction_activity' else 'corporate-action checks'}."
+            if influencing_case_ids else None
+        ),
+    }
+
     contributors = record("identify_top_contributors", {"top_n": 3}, identify_top_contributors_tool(scenario, 3))
     evidence.extend(evidence_from_tool_result("identify_top_contributors", contributors, scenario.exception_id))
     security_id = contributors[0]["security_id"] if contributors else None
     price = record("compare_price_sources", {"security_id": security_id}, compare_price_sources_tool(scenario, security_id) if security_id else {"found": False})
     evidence.extend(evidence_from_tool_result("compare_price_sources", price, scenario.exception_id))
 
-    # Memory can prioritize the order, but every available alternate check runs.
-    choices = ["check_corporate_actions", "check_transaction_activity"]
-    if prior_path and "compare_price_sources" in prior_path:
-        # A previously accepted price-led route guides the next most useful
-        # check toward transaction reconciliation before corporate actions.
-        choices = ["check_transaction_activity", "check_corporate_actions"]
-    order = list(prior_path or []) + [item.get("investigation_path", []) for item in historical]
-    flat_order = [name for path in order for name in (path if isinstance(path, list) else [])]
-    choices.sort(key=lambda name: min((flat_order.index(name) if name in flat_order else 10_000), 10_000))
     results: dict[str, Any] = {}
     for name in choices:
         tool = check_transaction_activity_tool if name == "check_transaction_activity" else check_corporate_actions_tool
@@ -356,7 +408,9 @@ def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: Cas
         rationale = "Available current-case records do not sufficiently attribute the NAV break."
 
     report = InvestigationReport(probable_root_cause=root, confidence=confidence, observations=[rationale], supporting_evidence=[], counter_evidence=[], recommended_next_step="Review the cited records and obtain any missing primary evidence before taking operational action.", human_review_required=True)
-    return AgentRun(report=report, trace=[ToolTrace(**item) for item in calls], evidence=evidence)
+    return AgentRun(report=report, trace=[ToolTrace(**item) for item in calls], evidence=evidence), memory_order
+
+
 class InvestigationWorkflow:
     """
     Orchestration layer.
@@ -381,11 +435,11 @@ class InvestigationWorkflow:
 
     def run_nav(
         self, scenario: InvestigationScenario, provider: Any | None = None,
-        prior_investigation_path: list[str] | None = None,
     ) -> dict[str, Any]:
         route = self.router.route("NAV_DISCREPANCY")
+        memory_order: dict[str, Any] = {}
         if provider is None:
-            run = _deterministic_adaptive_nav_run(scenario, self.memory, prior_investigation_path)
+            run, memory_order = _deterministic_adaptive_nav_run(scenario, self.memory)
             state = _state_from_specialist_report(scenario, run.report, run.evidence)
             state.exception = {**calculate_nav_variance_tool(scenario), **state.exception}
             for step in run.trace:
@@ -408,14 +462,13 @@ class InvestigationWorkflow:
             "exception_type": "NAV_DISCREPANCY",
         }
 
-        memory_context = _memory_context_from_evidence(state.evidence)
-        alternate_check_order = [step.tool_name for step in run.trace if step.tool_name in {"check_transaction_activity", "check_corporate_actions"}]
-        if (
-            provider is None
-            and memory_context["prior_investigation_paths"]
-            and alternate_check_order != ["check_corporate_actions", "check_transaction_activity"]
-        ):
-            memory_context["memory_influence"] = "Retrieved case investigation paths changed the order of alternate checks."
+        memory_context = _memory_context_from_evidence(
+            state.evidence,
+            default_check_order=memory_order.get("default_check_order"),
+            actual_check_order=memory_order.get("actual_check_order"),
+            influencing_case_ids=memory_order.get("influencing_case_ids"),
+        )
+        memory_context["memory_influence"] = memory_order.get("memory_influence")
 
         result = {
             "route": route,
