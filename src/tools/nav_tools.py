@@ -18,6 +18,7 @@ def calculate_nav_variance_tool(scenario: InvestigationScenario) -> dict[str, An
         expected_prices=scenario.expected_prices,
         calculated_prices=scenario.calculated_prices,
         shares_outstanding=scenario.shares_outstanding,
+        expected_holdings=scenario.expected_holdings,
     )
 
     if exception is None:
@@ -31,10 +32,19 @@ def identify_top_contributors_tool(
     top_n: int = 5,
 ) -> list[dict[str, Any]]:
     result = decompose_nav_exception(
-        scenario.dataset.holdings,
+        scenario.expected_holdings if scenario.expected_holdings is not None else scenario.dataset.holdings,
         scenario.expected_prices,
         scenario.calculated_prices,
     )
+    if scenario.expected_holdings is not None:
+        expected = scenario.expected_holdings.set_index("security_id")["quantity"]
+        actual = scenario.dataset.holdings.set_index("security_id")["quantity"]
+        result["quantity_difference"] = result["security_id"].map(actual).fillna(0) - result["security_id"].map(expected).fillna(0)
+        result["holding_value_difference"] = result["quantity_difference"] * result["calculated_price"]
+        if result["holding_value_difference"].abs().sum() > 0:
+            result["value_difference"] = result["holding_value_difference"]
+            result["contribution_pct"] = result["value_difference"].abs() / result["value_difference"].abs().sum() * 100
+            result = result.sort_values("contribution_pct", ascending=False)
     return result.head(top_n).to_dict(orient="records")
 
 
@@ -88,3 +98,4 @@ def get_fund_snapshot_tool(scenario: InvestigationScenario) -> dict[str, Any]:
         "gross_value": round(value, 2),
         "positions": len(scenario.dataset.holdings),
     }
+
