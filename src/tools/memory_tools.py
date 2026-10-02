@@ -17,6 +17,7 @@ def search_historical_cases_tool(
             query=query,
             exception_type=exception_type,
             top_k=top_k,
+            validated_only=True,
         )
     ]
 
