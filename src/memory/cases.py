@@ -137,7 +137,8 @@ class CaseMemoryBackend(Protocol):
     def next_case_id(self) -> str: ...
 
     def search(
-        self, query: str, exception_type: str | None = None, top_k: int = 3
+        self, query: str, exception_type: str | None = None, top_k: int = 3,
+        *, validated_only: bool = False,
     ) -> list[HistoricalCase]: ...
 
 
@@ -166,6 +167,8 @@ class CaseMemory:
         query: str,
         exception_type: str | None = None,
         top_k: int = 3,
+        *,
+        validated_only: bool = False,
     ) -> list[HistoricalCase]:
         tokens = {
             token.strip(".,:;!?").lower()
@@ -175,14 +178,15 @@ class CaseMemory:
 
         candidates = [
             case for case in self._cases
-            if exception_type is None or case.exception_type == exception_type
+            if (exception_type is None or case.exception_type == exception_type)
+            and (not validated_only or case.human_validated)
         ]
 
         scored = []
         for case in candidates:
-            text = " ".join(
-                (case.title, *case.symptoms, case.root_cause, case.resolution)
-            ).lower()
+            # Current titles can state the resolved cause, so only symptom and
+            # evidence context is safe to use for relevance.
+            text = " ".join((*case.symptoms, *case.useful_evidence)).lower()
             score = sum(1 for token in tokens if token in text)
             scored.append((score, case))
 
@@ -212,20 +216,22 @@ class SemanticMemory(CaseMemory):
         self._embedding_fn = embedding_fn
 
     def search(
-        self, query: str, exception_type: str | None = None, top_k: int = 3
+        self, query: str, exception_type: str | None = None, top_k: int = 3,
+        *, validated_only: bool = False,
     ) -> list[HistoricalCase]:
         query_vector = self._embedding_fn(query)
         if not query_vector:
             return []
         candidates = [
             case for case in self._cases
-            if exception_type is None or case.exception_type == exception_type
+            if (exception_type is None or case.exception_type == exception_type)
+            and (not validated_only or case.human_validated)
         ]
         ranked: list[tuple[float, HistoricalCase]] = []
         for case in candidates:
-            # Exclude root_cause: retrieval is based on symptoms/context, not
-            # an answer-key match. Retrieved cases are still explicitly analogies.
-            text = " ".join((case.title, *case.symptoms, case.resolution))
+            # Rank only on observable context; root cause and resolution remain
+            # available in returned cases for display and audit.
+            text = " ".join((*case.symptoms, *case.useful_evidence))
             score = _cosine_similarity(query_vector, self._embedding_fn(text))
             ranked.append((score, case))
         ranked.sort(key=lambda item: item[0], reverse=True)
