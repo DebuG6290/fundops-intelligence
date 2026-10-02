@@ -176,10 +176,11 @@ if result:
     with investigation:
         st.subheader("Operational Memory")
         memory_context = workbench.get_memory_preview(result)
-        st.write(f"Similar validated cases found: {sum(bool(case.get('human_validated')) for case in memory_context.get('retrieved_cases', []))}")
-        for case in memory_context.get("retrieved_cases", []):
+        retrieved_cases = [case for case in memory_context.get("retrieved_cases", []) if case.get("human_validated") is True]
+        st.write(f"Relevant human-validated historical analogies retrieved: {len(retrieved_cases)}")
+        for case in retrieved_cases:
             with st.expander(f"{case.get('case_id', 'Case')} · {case.get('title', 'Historical case')}"):
-                st.write("Human validated" if case.get("human_validated") else "Prior case")
+                st.write("Human-validated historical analogy · not proof of the current root cause")
                 st.write(f"**Prior case root cause:** {_label(case.get('historical_root_cause'))}")
                 if case.get("investigation_path"):
                     st.write("**Prior investigation path:** " + " → ".join(case["investigation_path"]))
@@ -188,7 +189,24 @@ if result:
         st.caption("Historical cases are analogies, not proof.")
         influence = memory_context.get("memory_influence")
         st.markdown("**How memory influenced this investigation**")
-        st.write(influence or "No prior investigation path materially influenced this run.")
+        if influence:
+            st.write(influence)
+        elif retrieved_cases:
+            st.write("Validated analogies were retrieved, but none changed the default order of current-case checks.")
+        else:
+            st.write("No relevant human-validated analogy was retrieved; the default check order was used.")
+        default_order = memory_context.get("default_check_order", [])
+        actual_order = memory_context.get("actual_check_order", [])
+        if actual_order:
+            st.write("**Current-case check order:** " + " → ".join(actual_order))
+        relevant_case_ids = memory_context.get("relevant_case_ids", [])
+        influencing_case_ids = memory_context.get("influencing_case_ids", [])
+        if relevant_case_ids:
+            st.write("**Validated cases with paths relevant to available checks:** " + ", ".join(relevant_case_ids))
+        if influencing_case_ids:
+            st.write("**Case(s) that changed the order:** " + ", ".join(influencing_case_ids))
+        elif default_order and actual_order:
+            st.write("**Ordering effect:** default order retained")
         st.subheader("Investigation Trace")
         tool_labels = {
             "calculate_nav_variance": "Calculate NAV variance",
@@ -319,6 +337,26 @@ if result:
                         st.code(f"{type(exc).__name__}: {exc}")
 
     with audit_tab:
+        st.subheader("Memory guidance for this investigation")
+        audit_memory = workbench.get_memory_preview(result)
+        validated_cases = [
+            case for case in audit_memory.get("retrieved_cases", [])
+            if case.get("human_validated") is True
+        ]
+        st.write(f"Human-validated historical analogies retrieved: {len(validated_cases)}")
+        audit_influence = audit_memory.get("memory_influence")
+        if audit_influence:
+            st.info(f"Memory influence: {audit_influence}")
+        elif validated_cases:
+            st.write("Validated historical cases retrieved; default investigation order retained.")
+        else:
+            st.write("No relevant human-validated historical cases retrieved; default investigation order retained.")
+        if audit_memory.get("actual_check_order"):
+            st.write("**Actual current-case check order:** " + " → ".join(audit_memory["actual_check_order"]))
+        if audit_memory.get("influencing_case_ids"):
+            st.write("**Case(s) that changed ordering:** " + ", ".join(audit_memory["influencing_case_ids"]))
+        if audit_memory.get("relevant_case_ids"):
+            st.write("**Retrieved cases with paths relevant to available checks:** " + ", ".join(audit_memory["relevant_case_ids"]))
         accepted_cases = list(workbench.workflow.accepted_cases_by_review_id.values())
         if accepted_cases:
             st.subheader("Recently validated")
