@@ -45,12 +45,20 @@ def evidence_from_tool_result(
                     "historical_root_cause": case.get("root_cause"),
                     "historical_resolution": case.get("resolution"),
                     "case_evidence": _json_safe(case.get("evidence", [])),
+                    "human_validated": case.get("human_validated", False),
+                    "investigation_path": _json_safe(case.get("investigation_path", [])),
+                    "useful_evidence": _json_safe(case.get("useful_evidence", [])),
+                    "title": case.get("title"),
                 },
             )
             for case in result or []
         ]
 
-    if isinstance(result, dict):
+    if tool_name in {"check_transaction_activity", "check_corporate_actions", "check_fx_context"}:
+        rows = result.get("records", []) if isinstance(result, dict) else []
+        if isinstance(result, dict) and tool_name == "check_fx_context" and not rows:
+            rows = [result] if result.get("available") else []
+    elif isinstance(result, dict):
         rows = [result]
     elif isinstance(result, list):
         rows = result
@@ -64,7 +72,7 @@ def evidence_from_tool_result(
         record = _json_safe(row)
         supports = f"exception:{exception_id}"
 
-        if tool_name == "find_transaction_mismatches":
+        if tool_name in {"find_transaction_mismatches", "check_transaction_activity"}:
             source_type = EvidenceSourceType.TRANSACTION_RECORD
             source_name = str(row.get("transaction_id", tool_name))
             quantity_difference = row.get("quantity_difference")
@@ -84,7 +92,7 @@ def evidence_from_tool_result(
                 f"{row.get('expected_type')}, actual type "
                 f"{row.get('actual_type')}."
             )
-        elif tool_name == "find_effective_corporate_actions":
+        elif tool_name in {"find_effective_corporate_actions", "check_corporate_actions"}:
             source_type = EvidenceSourceType.CORPORATE_ACTION_RECORD
             source_name = str(
                 row.get("corporate_action_id") or row.get("security_id") or tool_name
@@ -125,6 +133,16 @@ def evidence_from_tool_result(
                 or record.get("exception_detected")
                 else None
             )
+        elif tool_name == "check_security_mapping":
+            source_type = EvidenceSourceType.TOOL_RESULT
+            source_name = str(row.get("security_id", tool_name))
+            claim = f"Security mapping validation for {source_name}: valid={row.get('valid')} with current-dataset details {record}."
+            supports = None
+        elif tool_name in {"check_fx_context"}:
+            source_type = EvidenceSourceType.TOOL_RESULT
+            source_name = tool_name
+            claim = f"FX context observation returned by the deterministic tool: {record}."
+            supports = None
         else:
             source_type = EvidenceSourceType.TOOL_RESULT
             source_name = tool_name
@@ -154,3 +172,4 @@ def evidence_from_tool_result(
                 )
             )
     return items
+
