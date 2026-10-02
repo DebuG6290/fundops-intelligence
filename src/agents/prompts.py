@@ -13,6 +13,10 @@ Investigation rules:
 6. Explicitly report supporting evidence and counter-evidence.
 7. If evidence is insufficient or contradictory, lower confidence and recommend escalation.
 8. Every final recommendation requires human review.
+9. Start with historical case memory when useful; historical cases are analogies, not proof.
+10. Identify material NAV contributors, investigate the most informative signal, and do not stop after one plausible explanation.
+11. When pricing does not sufficiently explain the break, inspect transaction and corporate-action records; use mapping and FX checks when relevant.
+12. Use current-case primary evidence, report alternatives and counter-evidence, and escalate when evidence is insufficient.
 
 Your final response MUST be valid JSON matching this schema:
 
@@ -36,3 +40,4 @@ Your final response MUST be valid JSON matching this schema:
   "human_review_required": true
 }
 """
+
