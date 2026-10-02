@@ -16,6 +16,10 @@ class InvestigationScenario:
     exception_id: str
     known_root_cause: str
     culprit_security_id: str
+    expected_holdings: pd.DataFrame | None = None
+    expected_transactions: pd.DataFrame | None = None
+    actual_transactions: pd.DataFrame | None = None
+    corporate_actions: pd.DataFrame | None = None
 
 
 def create_price_exception_scenario(seed: int = 42) -> InvestigationScenario:
@@ -46,3 +50,4 @@ def create_price_exception_scenario(seed: int = 42) -> InvestigationScenario:
         known_root_cause=f"PRICE_EXCEPTION:{culprit}",
         culprit_security_id=culprit,
     )
+
