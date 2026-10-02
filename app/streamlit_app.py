@@ -6,32 +6,21 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime
 
-# ---------------------------------------------------------
-# Project root setup
-# ---------------------------------------------------------
-# streamlit_app.py lives inside /app.
-# Add the repository root so imports such as
-# `evaluation.*` and `src.*` work reliably.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
 import pandas as pd
 import streamlit as st
-
 from dotenv import load_dotenv
 
-# Load .env from the repository root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
-
 
 from evaluation.benchmark import evaluate_rules_and_ml
 from src.data.benchmark import generate_benchmark_dataset
-from src.demo.workbench import DemoWorkbench
+from src.demo.final_workbench import FinalDemoWorkbench
 from src.llm.sarvam_provider import SarvamProvider
 from src.review.models import HumanDecision
+
 
 def _format_metric(value: Any) -> str:
     if value is None:
@@ -42,6 +31,7 @@ def _format_metric(value: Any) -> str:
 def _label(value: Any) -> str:
     """Translate internal enum-like identifiers for analyst-facing labels."""
     text = str(value or "Not available")
+    cause = text.split(":", 1)[0]
     labels = {
         "NAV_DISCREPANCY": "NAV discrepancy",
         "TRANSACTION_MISMATCH": "Transaction mismatch",
@@ -55,14 +45,22 @@ def _label(value: Any) -> str:
         "PRICE_SOURCE": "Pricing source",
         "HISTORICAL_CASE": "Historical analogy",
         "PRICE_EXCEPTION": "Pricing source discrepancy",
+        "MISSING_TRANSACTION": "Missing transaction record",
+        "TRANSACTION_QUANTITY_MISMATCH": "Transaction quantity mismatch",
+        "TRANSACTION_TYPE_MISMATCH": "Transaction type mismatch",
+        "CORPORATE_ACTION": "Corporate action affecting a position",
+        "UNKNOWN": "Unresolved cause",
+        "TRANSACTION_RECORD": "Transaction record",
+        "CORPORATE_ACTION_RECORD": "Corporate-action record",
+        "TOOL_RESULT": "Tool result",
     }
-    return labels.get(text, text.replace("_", " ").title())
+    return labels.get(cause, labels.get(text, text.replace("_", " ").title()))
 
 st.set_page_config(page_title="FundOps Intelligence", page_icon="◈", layout="wide")
 st.markdown("<style>.block-container{max-width:1440px;padding-top:1.2rem}[data-testid='stMetric']{background:#f5f7fa;border:1px solid #e4e8ef;border-radius:10px;padding:12px 14px}</style>", unsafe_allow_html=True)
 
 if "fundops_workbench" not in st.session_state:
-    st.session_state.fundops_workbench = DemoWorkbench()
+    st.session_state.fundops_workbench = FinalDemoWorkbench()
 if "investigation_result" not in st.session_state:
     st.session_state.investigation_result = None
 if "review_records" not in st.session_state:
@@ -70,36 +68,43 @@ if "review_records" not in st.session_state:
 if "benchmark_result" not in st.session_state:
     st.session_state.benchmark_result = None
 
-workbench: DemoWorkbench = st.session_state.fundops_workbench
+workbench: FinalDemoWorkbench = st.session_state.fundops_workbench
 has_sarvam_key = bool(os.getenv("SARVAM_API_KEY"))
+if "pending_scenario_label" in st.session_state:
+    st.session_state["demo_exception"] = st.session_state.pop("pending_scenario_label")
 st.markdown("**FUND OPERATIONS · INVESTIGATION WORKBENCH**")
 st.title("FundOps Intelligence")
-st.caption("Synthetic decision-support prototype · Machines calculate. Agents investigate. Evidence constrains. Humans decide.")
+st.caption("Machines calculate. Memory guides. Agents investigate. Evidence constrains. Humans decide.")
 
 with st.container(border=True):
     left, right, action = st.columns([2.2, 1.4, 1])
     with left:
-        scenario_name = st.selectbox("Demo exception", [workbench.NAV, workbench.TRANSACTION, workbench.CORPORATE_ACTION, workbench.INSUFFICIENT])
+        scenario_labels = {
+            "Pricing feed discrepancy": "NAV_PRICE",
+            "Transaction-related NAV break": "NAV_TRANSACTION",
+            "Corporate-action-related NAV break": "NAV_CORPORATE_ACTION",
+            "Insufficient evidence": "NAV_INSUFFICIENT",
+        }
+        scenario_label = st.selectbox("Demo exception", list(scenario_labels), key="demo_exception")
+        scenario_id = scenario_labels[scenario_label]
     with right:
-        modes = ["Reproducible demo"] + (["Live Sarvam"] if has_sarvam_key else [])
+        modes = ["Reproducible investigation"] + (["Live Sarvam"] if has_sarvam_key else [])
         mode = st.selectbox("Investigation mode", modes)
     with action:
         st.write("")
-        run_clicked = st.button("Investigate", type="primary", use_container_width=True)
+        run_clicked = st.button("Investigate exception", type="primary", use_container_width=True)
     if not has_sarvam_key:
-        st.caption("Deterministic Demo is available offline. Configure SARVAM_API_KEY to enable Live Sarvam.")
+        st.caption("Reproducible investigation is fully offline. Configure SARVAM_API_KEY to enable Live Sarvam.")
     else:
         st.caption(f"Live Sarvam · model {os.getenv('SARVAM_MODEL', 'sarvam-105b')}")
 
 if run_clicked:
-    # Drop any previous case before a new attempt so a failed live request
-    # cannot leave stale findings on screen as though they belonged to it.
+    # Clear only the displayed result; preserve the audit history for the session.
     st.session_state.investigation_result = None
-    st.session_state.review_records = []
     try:
         provider = SarvamProvider() if mode == "Live Sarvam" else None
         with st.spinner("Reviewing deterministic signals and operational evidence…"):
-            st.session_state.investigation_result = workbench.investigate(scenario_name, provider)
+            st.session_state.investigation_result = workbench.investigate(scenario_id, provider)
             st.session_state.investigation_result["demo_run_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     except Exception as exc:
         st.error("The investigation could not be completed. Check the selected mode and provider configuration.")
@@ -127,11 +132,12 @@ if result:
     header[2].metric("Control status", _label(result.get("status")))
     header[3].metric("Mode", "Live Sarvam" if result.get("investigator_mode") == "specialist_agent" else "Deterministic Demo")
 
-    overview, investigation, evidence_tab, decision_tab, audit_tab, eval_tab = st.tabs(["Overview", "Investigation", "Evidence", "Decision", "Audit & Memory", "Evaluation"])
+    overview, investigation, evidence_tab, decision_tab, audit_tab, eval_tab = st.tabs(["Exception", "Investigation", "Evidence", "Human Decision", "Audit & Memory", "Evaluation"])
     with overview:
         c1, c2 = st.columns([1.3, 1])
         with c1:
             st.subheader("Exception summary")
+            st.write(f"**Scenario:** {result.get('scenario_title', 'NAV investigation')}")
             st.write(f"**ID:** `{exc_id}`")
             st.write(f"**Type:** {_label(exception.get('exception_type'))}")
             st.write(f"**Current recommendation:** {_label(resolution.get('decision'))}")
@@ -143,6 +149,7 @@ if result:
             if exception.get("variance_bps") is not None:
                 st.write(f"**Measured NAV variance:** {exception['variance_bps']:.2f} bps")
             st.write("**What happened?** A fund-operation exception was identified and passed through deterministic analytics and evidence review.")
+            st.write(result.get("scenario_description", ""))
             st.write("**What is the system investigating?** Whether the leading hypothesis explains the observed records, and whether any primary evidence challenges it.")
             st.write(f"**Leading hypothesis:** {_label(root_cause)}" if leading else "**Leading hypothesis:** None; further investigation is required.")
             st.write(f"**Evidence:** {supporting_count} supporting · {counter_count} contradictory · {max(0, len(hypotheses) - 1)} competing hypotheses")
@@ -154,12 +161,55 @@ if result:
             with st.expander("Confidence score details"):
                 st.write(f"Investigator score: {confidence:.2f}. This is not a calibrated probability.")
             st.metric("Evidence sufficiency", "Insufficient" if challenge.get("insufficient_evidence") else "Sufficient")
+            st.subheader("Evidence Challenge")
+            st.write(f"Hypothesis challenged: {'Yes' if challenge.get('challenged') else 'No'}")
+            st.write(f"Contradiction found: {'Yes' if challenge.get('contradiction_found') else 'No'}")
+            st.write(f"Ambiguity found: {'Yes' if challenge.get('ambiguity_found') else 'No'}")
+            primary_available = any(item.get("source_type") not in {"HISTORICAL_CASE", "SPECIALIST_OBSERVATION"} for item in evidence_items)
+            st.write(f"Primary current-case evidence available: {'Yes' if primary_available else 'No'}")
+            st.write(f"Final investigator score: {float(challenge.get('final_confidence', confidence)):.2f} · not a calibrated probability")
             if result.get("status") == "ESCALATE":
                 st.warning(challenge.get("recommendation", "Escalation required."))
             else:
                 st.success(challenge.get("recommendation", "Ready for human review."))
 
     with investigation:
+        st.subheader("Operational Memory")
+        memory_context = workbench.get_memory_preview(result)
+        st.write(f"Similar validated cases found: {sum(bool(case.get('human_validated')) for case in memory_context.get('retrieved_cases', []))}")
+        for case in memory_context.get("retrieved_cases", []):
+            with st.expander(f"{case.get('case_id', 'Case')} · {case.get('title', 'Historical case')}"):
+                st.write("Human validated" if case.get("human_validated") else "Prior case")
+                st.write(f"**Prior case root cause:** {_label(case.get('historical_root_cause'))}")
+                if case.get("investigation_path"):
+                    st.write("**Prior investigation path:** " + " → ".join(case["investigation_path"]))
+                if case.get("useful_evidence"):
+                    st.write("**Useful evidence:** " + ", ".join(case["useful_evidence"]))
+        st.caption("Historical cases are analogies, not proof.")
+        influence = memory_context.get("memory_influence")
+        st.markdown("**How memory influenced this investigation**")
+        st.write(influence or "No prior investigation path materially influenced this run.")
+        st.subheader("Investigation Trace")
+        tool_labels = {
+            "calculate_nav_variance": "Calculate NAV variance",
+            "get_fund_snapshot": "Review fund snapshot",
+            "identify_top_contributors": "Identify NAV contributors",
+            "compare_price_sources": "Compare price sources",
+            "check_transaction_activity": "Check transaction activity",
+            "check_corporate_actions": "Check corporate actions",
+            "check_security_mapping": "Validate security mapping",
+            "check_fx_context": "Check FX context",
+            "search_historical_cases": "Search historical cases",
+        }
+        for index, step in enumerate(result.get("trace", []), start=1):
+            with st.expander(f"STEP {index} · {tool_labels.get(step.get('tool_name'), step.get('tool_name', 'Investigation step'))}", expanded=index == 1):
+                st.write("**Arguments**")
+                st.json(step.get("arguments", {}))
+                st.write("**Result summary**")
+                raw_result = step.get("result")
+                st.write(f"Returned {len(raw_result)} record(s)." if isinstance(raw_result, list) else "Tool result recorded.")
+                with st.expander("View complete tool result"):
+                    st.json(raw_result)
         st.subheader("Hypotheses")
         st.caption("Confidence is an investigator score, not a calibrated probability.")
         if hypotheses:
@@ -225,7 +275,9 @@ if result:
                     st.session_state.review_records.append(record)
                     accepted = workbench.accepted_case(record.review_id)
                     if accepted:
-                        st.success(f"Accepted case added to validated case memory: {accepted.case_id}")
+                        st.success(f"Human-validated case added to operational memory: {accepted.case_id}")
+                        st.write("**Investigation path stored:** " + (" → ".join(accepted.investigation_path) if accepted.investigation_path else "No tool path recorded."))
+                        st.write("**Useful evidence stored:** " + (", ".join(accepted.useful_evidence) if accepted.useful_evidence else "No typed evidence recorded."))
                     elif record.human_decision is HumanDecision.REJECT:
                         st.success("Decision recorded. The case was not promoted to validated memory.")
                     else:
@@ -245,22 +297,49 @@ if result:
                 else:
                     st.warning("The human reviewer requested further investigation. The case is not considered validated.")
 
+        run_time = datetime.fromisoformat(result["demo_run_at"]) if result.get("demo_run_at") else None
+        current_reviews = [
+            record for record in st.session_state.review_records
+            if record.exception_id == exc_id and (run_time is None or record.timestamp >= run_time)
+        ]
+        if current_reviews and current_reviews[-1].human_decision is HumanDecision.ACCEPT and workbench.accepted_case(current_reviews[-1].review_id):
+            followup_map = {"NAV_PRICE": "NAV_TRANSACTION", "NAV_TRANSACTION": "NAV_PRICE", "NAV_CORPORATE_ACTION": "NAV_PRICE", "NAV_INSUFFICIENT": "NAV_PRICE"}
+            next_id = followup_map.get(result.get("scenario_id"), "NAV_PRICE")
+            if st.button("Run a similar follow-up exception", key="run_follow_up"):
+                try:
+                    next_label = next(label for label, value in scenario_labels.items() if value == next_id)
+                    st.session_state["pending_scenario_label"] = next_label
+                    provider = SarvamProvider() if result.get("investigator_mode") == "specialist_agent" else None
+                    st.session_state.investigation_result = workbench.investigate(next_id, provider)
+                    st.session_state.investigation_result["demo_run_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+                    st.rerun()
+                except Exception as exc:
+                    st.error("The follow-up investigation could not be completed.")
+                    with st.expander("Technical details"):
+                        st.code(f"{type(exc).__name__}: {exc}")
+
     with audit_tab:
-        accepted_cases = [workbench.accepted_case(record.review_id) for record in st.session_state.review_records]
-        accepted_cases = [case for case in accepted_cases if case is not None]
+        accepted_cases = list(workbench.workflow.accepted_cases_by_review_id.values())
         if accepted_cases:
             st.subheader("Recently validated")
             for case in reversed(accepted_cases):
                 st.success(f"✓ {case.case_id} · {_label(case.exception_type)} · Human validated")
                 with st.expander(f"Review the accepted case {case.case_id}"):
                     st.write(case.title)
-                    st.write(f"Confirmed root cause: {_label(case.root_cause)}")
+                    st.write(f"Prior human-accepted root cause: {_label(case.root_cause)}")
                     st.write(case.resolution)
+                    st.write("**Investigation path:** " + " → ".join(case.investigation_path))
+                    st.write("**Useful evidence:** " + ", ".join(case.useful_evidence))
+                    st.write(f"**Reviewer reason:** {case.review_metadata.get('reviewer_reason', 'Not recorded')}")
                     st.caption(f"Added {case.review_metadata.get('timestamp', 'timestamp unavailable')}")
         st.subheader("Investigation timeline")
         if result.get("demo_run_at"):
             st.caption(f"Investigation completed · {result['demo_run_at']}")
         st.markdown("**System** · Deterministic analytics and evidence checks completed")
+        for index, step in enumerate(result.get("trace", []), start=1):
+            st.markdown(f"**STEP {index}** · {tool_labels.get(step.get('tool_name'), step.get('tool_name', 'Investigation step'))}")
+            with st.expander(f"Timeline details · step {index}"):
+                st.json({"arguments": step.get("arguments", {}), "result": step.get("result")})
         st.markdown("**Control layer** · Hypothesis challenge and resolution recommendation completed")
         for record in st.session_state.review_records:
             st.markdown(f"**{record.timestamp.strftime('%H:%M:%S')}** · Human reviewer recorded **{_label(record.human_decision.value)}** · Review `{record.review_id}`")
@@ -280,8 +359,8 @@ if result:
             st.caption("No matching historical analogies.")
 
     with eval_tab:
-        st.subheader("Offline baseline comparison")
-        st.caption("Metrics are calculated on seeded synthetic holdout data, not claims about LLM quality.")
+        st.subheader("Research Evaluation")
+        st.caption("This benchmark evaluates investigation approaches on controlled synthetic holdout cases. It is separate from the interactive investigation demonstration.")
         live_eval = st.checkbox("Also run real Sarvam baselines (uses API quota)", disabled=not has_sarvam_key)
         llm_case_limit = st.slider("Maximum held-out cases per Sarvam approach", 1, 20, 5, disabled=not live_eval)
         confirm_live = st.checkbox("I understand this sends synthetic cases to Sarvam", disabled=not live_eval)
@@ -348,4 +427,5 @@ if result:
 else:
     st.info("Choose a synthetic exception and investigate to review hypotheses, evidence, challenge outcome, and a human decision.")
 # Session-local review and benchmark state intentionally resets with the demo process.
+
 
