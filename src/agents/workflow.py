@@ -20,11 +20,13 @@ from src.data.scenarios_extra import (
 )
 from src.memory.cases import CaseMemory, HistoricalCase
 from src.models.evidence import EvidenceItem
+from src.agents.evidence import _json_safe
 from src.review.models import HumanDecision, HumanReviewRecord, HumanReviewSubmission
 from src.review.service import HumanReviewService
 from src.tools.exception_tools import find_corporate_actions_tool, find_transaction_mismatches_tool
 from src.tools.memory_tools import search_historical_cases_tool
-from src.tools.nav_tools import calculate_nav_variance_tool
+from src.tools.nav_tools import calculate_nav_variance_tool, compare_price_sources_tool, get_fund_snapshot_tool, identify_top_contributors_tool
+from src.tools.investigation_tools import check_transaction_activity_tool, check_corporate_actions_tool, check_security_mapping_tool, check_fx_context_tool
 
 
 def _state_from_specialist_report(
@@ -266,6 +268,95 @@ def _deterministic_corporate_action_run(scenario: CorporateActionScenario, memor
     )
 
 
+def _memory_context_from_evidence(evidence: list[EvidenceItem]) -> dict[str, Any]:
+    cases = []
+    for item in evidence:
+        if item.source_type.value != "HISTORICAL_CASE":
+            continue
+        meta = item.metadata
+        cases.append({key: meta[key] for key in (
+            "case_id", "title", "historical_root_cause", "human_validated",
+            "investigation_path", "useful_evidence",
+        ) if key in meta})
+    return {
+        "retrieved_cases": cases,
+        "retrieved_case_count": len(cases),
+        "prior_investigation_paths": [case["investigation_path"] for case in cases if case.get("investigation_path")],
+        "memory_influence": None,
+    }
+
+
+def _deterministic_adaptive_nav_run(scenario: InvestigationScenario, memory: CaseMemory, prior_path: list[str] | None = None):
+    """Run an offline, evidence-backed investigation; prior paths only order available checks."""
+    from src.agents.agent_loop import AgentRun
+    from src.agents.evidence import evidence_from_tool_result
+    from src.agents.schemas import InvestigationReport
+
+    calls: list[dict[str, Any]] = []
+    evidence: list[EvidenceItem] = []
+    def record(name: str, args: dict[str, Any], value: Any) -> Any:
+        calls.append({"tool_name": name, "arguments": args, "result": value})
+        return value
+
+    nav_analytics = calculate_nav_variance_tool(scenario)
+    evidence.extend(evidence_from_tool_result("calculate_nav_variance", nav_analytics, scenario.exception_id))
+    record("calculate_nav_variance", {}, nav_analytics)
+    snapshot = get_fund_snapshot_tool(scenario)
+    evidence.extend(evidence_from_tool_result("get_fund_snapshot", snapshot, scenario.exception_id))
+    record("get_fund_snapshot", {}, snapshot)
+    historical = record("search_historical_cases", {"query": "NAV variance price transaction corporate action", "exception_type": "NAV_DISCREPANCY"}, search_historical_cases_tool(memory, "NAV variance price transaction corporate action", "NAV_DISCREPANCY", 5))
+    evidence.extend(evidence_from_tool_result("search_historical_cases", historical, scenario.exception_id))
+    contributors = record("identify_top_contributors", {"top_n": 3}, identify_top_contributors_tool(scenario, 3))
+    evidence.extend(evidence_from_tool_result("identify_top_contributors", contributors, scenario.exception_id))
+    security_id = contributors[0]["security_id"] if contributors else None
+    price = record("compare_price_sources", {"security_id": security_id}, compare_price_sources_tool(scenario, security_id) if security_id else {"found": False})
+    evidence.extend(evidence_from_tool_result("compare_price_sources", price, scenario.exception_id))
+
+    # Memory can prioritize the order, but every available alternate check runs.
+    choices = ["check_corporate_actions", "check_transaction_activity"]
+    if prior_path and "compare_price_sources" in prior_path:
+        # A previously accepted price-led route guides the next most useful
+        # check toward transaction reconciliation before corporate actions.
+        choices = ["check_transaction_activity", "check_corporate_actions"]
+    order = list(prior_path or []) + [item.get("investigation_path", []) for item in historical]
+    flat_order = [name for path in order for name in (path if isinstance(path, list) else [])]
+    choices.sort(key=lambda name: min((flat_order.index(name) if name in flat_order else 10_000), 10_000))
+    results: dict[str, Any] = {}
+    for name in choices:
+        tool = check_transaction_activity_tool if name == "check_transaction_activity" else check_corporate_actions_tool
+        result = record(name, {"security_id": security_id}, tool(scenario, security_id))
+        results[name] = result
+
+    mapping = record("check_security_mapping", {"security_id": security_id or ""}, check_security_mapping_tool(scenario, security_id) if security_id else {"valid": False})
+    fx = record("check_fx_context", {"security_id": security_id}, check_fx_context_tool(scenario, security_id))
+    del mapping, fx
+
+    if price.get("found") and abs(float(price.get("difference_pct", 0))) >= 10:
+        root, confidence = f"PRICE_EXCEPTION:{security_id}", 0.9
+        claim = f"Current price records show a {price['difference_pct']}% difference for {security_id}."
+        evidence.append(EvidenceItem(source_type="PRICE_SOURCE", source_name=str(security_id), claim=claim, supports="PRICE_EXCEPTION", exception_id=scenario.exception_id, metadata=price))
+        rationale = claim
+    elif results["check_transaction_activity"].get("records"):
+        row = results["check_transaction_activity"]["records"][0]
+        tid = str(row.get("transaction_id"))
+        root = f"MISSING_TRANSACTION:{tid}" if row.get("_merge") == "left_only" else f"TRANSACTION_QUANTITY_MISMATCH:{tid}"
+        confidence = 0.88
+        claim = f"Transaction reconciliation returned an unexplained record for {tid}: quantity difference {row.get('quantity_difference')} (expected {row.get('expected_quantity')}, actual {row.get('actual_quantity')})."
+        evidence.append(EvidenceItem(source_type="TRANSACTION_RECORD", source_name=tid, claim=claim, supports=root, exception_id=scenario.exception_id, metadata=row))
+        rationale = claim
+    elif results["check_corporate_actions"].get("records") and scenario.expected_holdings is not None:
+        action = results["check_corporate_actions"]["records"][0]
+        sid = str(action["security_id"])
+        root, confidence = f"CORPORATE_ACTION:{sid}", 0.88
+        claim = f"An effective {action.get('action_type')} record exists for {sid}; the event is relevant to the current position break."
+        evidence.append(EvidenceItem(source_type="CORPORATE_ACTION_RECORD", source_name=str(action.get("corporate_action_id", sid)), claim=claim, supports=root, exception_id=scenario.exception_id, metadata=action))
+        rationale = claim
+    else:
+        root, confidence = "UNKNOWN", 0.25
+        rationale = "Available current-case records do not sufficiently attribute the NAV break."
+
+    report = InvestigationReport(probable_root_cause=root, confidence=confidence, observations=[rationale], supporting_evidence=[], counter_evidence=[], recommended_next_step="Review the cited records and obtain any missing primary evidence before taking operational action.", human_review_required=True)
+    return AgentRun(report=report, trace=[ToolTrace(**item) for item in calls], evidence=evidence)
 class InvestigationWorkflow:
     """
     Orchestration layer.
@@ -289,11 +380,19 @@ class InvestigationWorkflow:
         self.accepted_cases_by_review_id: dict[str, HistoricalCase] = {}
 
     def run_nav(
-        self, scenario: InvestigationScenario, provider: Any | None = None
+        self, scenario: InvestigationScenario, provider: Any | None = None,
+        prior_investigation_path: list[str] | None = None,
     ) -> dict[str, Any]:
         route = self.router.route("NAV_DISCREPANCY")
         if provider is None:
-            state = self.investigator.investigate(scenario)
+            run = _deterministic_adaptive_nav_run(scenario, self.memory, prior_investigation_path)
+            state = _state_from_specialist_report(scenario, run.report, run.evidence)
+            state.exception = {**calculate_nav_variance_tool(scenario), **state.exception}
+            for step in run.trace:
+                if step.tool_name == "identify_top_contributors":
+                    state.add_observation("top_contributors", step.result, step.tool_name)
+                elif step.tool_name == "compare_price_sources":
+                    state.add_observation("price_source_check", step.result, step.tool_name)
         else:
             run = NavInvestigationAgent(self.memory, provider=provider).investigate(scenario)
             if run.report is None:
@@ -309,18 +408,29 @@ class InvestigationWorkflow:
             "exception_type": "NAV_DISCREPANCY",
         }
 
+        memory_context = _memory_context_from_evidence(state.evidence)
+        alternate_check_order = [step.tool_name for step in run.trace if step.tool_name in {"check_transaction_activity", "check_corporate_actions"}]
+        if (
+            provider is None
+            and memory_context["prior_investigation_paths"]
+            and alternate_check_order != ["check_corporate_actions", "check_transaction_activity"]
+        ):
+            memory_context["memory_influence"] = "Retrieved case investigation paths changed the order of alternate checks."
+
         result = {
             "route": route,
+            "exception_id": scenario.exception_id,
             "exception": exception,
-            "observations": state.observations,
+            "observations": _json_safe(state.observations),
             "hypotheses": state.hypotheses,
             **_control_outputs(self, state),
+            "memory_context": memory_context,
+            "trace": [item.model_dump(mode="json") for item in run.trace],
         }
         if provider is not None:
             result.update({
                 "exception_id": scenario.exception_id,
                 "investigator_mode": "specialist_agent",
-                "known_root_cause": scenario.known_root_cause,
                 "report": run.report.model_dump(),
                 "trace": [item.model_dump() for item in run.trace],
                 "telemetry": run.telemetry.as_dict(),
@@ -352,6 +462,7 @@ class InvestigationWorkflow:
             "trace": [item.model_dump() for item in run.trace],
             "telemetry": run.telemetry.as_dict(),
             **_control_outputs(self, state, report_evidence_is_narrative=True),
+            "memory_context": _memory_context_from_evidence(state.evidence),
         }
 
     def run_corporate_action(
@@ -378,6 +489,7 @@ class InvestigationWorkflow:
             "trace": [item.model_dump() for item in run.trace],
             "telemetry": run.telemetry.as_dict(),
             **_control_outputs(self, state, report_evidence_is_narrative=True),
+            "memory_context": _memory_context_from_evidence(state.evidence),
         }
 
     def submit_human_review(
@@ -454,6 +566,24 @@ class InvestigationWorkflow:
                 if symptom:
                     symptom_values.append(str(symptom))
             symptoms = tuple(symptom_values)
+            trace = investigation_result.get("trace", [])
+            investigation_path: list[str] = []
+            for step in trace:
+                name = step.get("tool_name") if isinstance(step, dict) else None
+                if name and (not investigation_path or investigation_path[-1] != name):
+                    investigation_path.append(name)
+            source_labels = {
+                "DETERMINISTIC_ANALYTICS": "deterministic analytics",
+                "PRICE_SOURCE": "price-source comparison",
+                "TRANSACTION_RECORD": "transaction reconciliation",
+                "CORPORATE_ACTION_RECORD": "corporate-action status",
+                "HISTORICAL_CASE": "historical analogy",
+                "TOOL_RESULT": "tool result",
+            }
+            useful_evidence = list(dict.fromkeys(
+                source_labels[item.source_type.value]
+                for item in evidence if item.source_type.value in source_labels
+            ))
             title = f"Human-accepted {exception_type.replace('_', ' ').lower()} investigation: {root_cause}"
             case = HistoricalCase(
                 case_id=self.memory.next_case_id(),
@@ -473,7 +603,10 @@ class InvestigationWorkflow:
                     "agent_confidence": record.agent_confidence,
                     "agent_hypothesis_id": record.agent_hypothesis_id,
                 },
+                investigation_path=tuple(investigation_path),
+                useful_evidence=tuple(useful_evidence),
             )
             self.memory.add(case)
             self.accepted_cases_by_review_id[record.review_id] = case
         return record
+
