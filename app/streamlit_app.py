@@ -57,7 +57,38 @@ def _label(value: Any) -> str:
     return labels.get(cause, labels.get(text, text.replace("_", " ").title()))
 
 st.set_page_config(page_title="FundOps Intelligence", page_icon="◈", layout="wide")
-st.markdown("<style>.block-container{max-width:1440px;padding-top:1.2rem}[data-testid='stMetric']{background:#f5f7fa;border:1px solid #e4e8ef;border-radius:10px;padding:12px 14px}</style>", unsafe_allow_html=True)
+st.markdown("""
+<style>
+.block-container {
+    max-width: 1600px;
+    padding-top: 1.2rem;
+}
+
+[data-testid="stMetric"] {
+    background: #f5f7fa;
+    border: 1px solid #e4e8ef;
+    border-radius: 10px;
+    padding: 12px 16px;
+    min-height: 115px;
+    overflow: hidden;
+}
+
+[data-testid="stMetricValue"] {
+    width: 100%;
+}
+
+[data-testid="stMetricValue"] > div {
+    font-size: clamp(1.25rem, 1.7vw, 1.9rem) !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    max-width: 100% !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 if "fundops_workbench" not in st.session_state:
     st.session_state.fundops_workbench = FinalDemoWorkbench()
@@ -126,11 +157,27 @@ if result:
     supporting_count = sum(1 for item in evidence_items if item.get("supports_hypothesis") == leading.get("hypothesis_id") or item.get("supports") == root_cause)
     counter_count = sum(1 for item in evidence_items if item.get("contradicts_hypothesis") == leading.get("hypothesis_id") or item.get("contradicts") == root_cause)
 
-    header = st.columns([2, 1, 1, 1])
-    header[0].markdown(f"**Investigation**  \n`{exc_id}`")
-    header[1].metric("Exception type", _label(exception.get("exception_type")))
-    header[2].metric("Control status", _label(result.get("status")))
-    header[3].metric("Mode", "Live Sarvam" if result.get("investigator_mode") == "specialist_agent" else "Deterministic Demo")
+    st.markdown("### Investigation")
+    st.code(result.get("exception_id"))
+
+    header = st.columns(3)
+
+    header[0].metric(
+        "Exception type",
+        _label(exception.get("exception_type")),
+    )
+
+    header[1].metric(
+        "Control status",
+        _label(result.get("status")),
+    )
+
+    header[2].metric(
+        "Mode",
+        "Live Sarvam"
+        if result.get("investigator_mode") == "specialist_agent"
+        else "Deterministic Demo",
+    )
 
     overview, investigation, evidence_tab, decision_tab, audit_tab, eval_tab = st.tabs(["Exception", "Investigation", "Evidence", "Human Decision", "Audit & Memory", "Evaluation"])
     with overview:
